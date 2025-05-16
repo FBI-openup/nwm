@@ -6,7 +6,7 @@
 # - 请确保系统已安装 mamba。
 # - 脚本会自动创建名为 "nwm-env" 的环境，并安装必要依赖。
 #
-# 使用方式：
+# 使用方式： (linux 在终端中运行以下命令 windows 使用 wsl2)
 # 1. 保存本文件为 setup_nwm_env.sh
 # 2. 给予执行权限：chmod +x setup_nwm_env.sh
 # 3. 运行脚本：./setup_nwm_env.sh
@@ -37,7 +37,10 @@ echo "Step 6: Install world model project libraries (einops, transformers) using
 pip3 install einops transformers
 
 echo "Step 7: Install additional pip-only libraries"
-pip3 install decord diffusers tqdm timm torcheval lpips notebook dreamsim
+pip3 install decord diffusers tqdm timm torcheval lpips notebook dreamsim ipywidgets ffmpeg
+
+echo "Step 8: Install additional conda libraries" ffmpegfor video processing
+conda install -c conda-forge ffmpeg
 
 echo "✅ Environment 'nwm-env' setup complete. You can now activate it using:"
 echo "   mamba activate nwm-env"
