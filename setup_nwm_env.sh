@@ -22,13 +22,14 @@ mamba create -y -n nwm-env python=3.10
 
 echo "Step 2: Activate the environment"
 source "$(conda info --base)/etc/profile.d/conda.sh"
+eval "$(mamba shell hook --shell bash)"
 mamba activate nwm-env
 
 echo "Step 3: Install PyTorch, torchvision, torchaudio with CUDA 12.6 using pip"
-pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu126
+pip3 install pyyaml typeguard --pre torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/nightly/cu126
 
 echo "Step 4: Install core scientific libraries using pip"
-pip3 install numpy scipy pandas matplotlib scikit-learn
+pip3 install numpy scipy pandas matplotlib scikit-learn 
 
 echo "Step 5: Install IPython and JupyterLab using pip"
 pip3 install ipython jupyterlab
