@@ -8,4 +8,4 @@ models
 nwm/data
 data_splits/**/dataset*.pkl
 data
-nwm.sh
+#nwm.sh
