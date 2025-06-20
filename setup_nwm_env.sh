@@ -17,6 +17,8 @@
 # 出错立即终止
 set -e
 
+eval "$(mamba shell hook --shell bash)"
+
 echo "Step 1: Create new conda environment (nwm-env, Python 3.10)"
 mamba create -y -n nwm-env python=3.10
 
