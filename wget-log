@@ -1,11 +1,0 @@
---2025-06-19 14:52:15--  https://filesender.renater.fr/?s=download
-Resolving filesender.renater.fr (filesender.renater.fr)... 194.57.3.10, 2001:660:3001:6130::10
-Connecting to filesender.renater.fr (filesender.renater.fr)|194.57.3.10|:443... connected.
-HTTP request sent, awaiting response... 200 OK
-Length: unspecified [text/html]
-Saving to: ‘index.html?s=download’
-
-index.html?s=download             [<=>                                               ]       0  --.-KB/s               index.html?s=download             [ <=>                                              ]  15.19K  --.-KB/s    in 0.002s  
-
-2025-06-19 14:52:15 (6.45 MB/s) - ‘index.html?s=download’ saved [15552]
-
