@@ -1,0 +1,28 @@
+run_name: nwm_cdit_xl_4070ti
+
+# training setup
+results_dir: logs_4070ti
+train: True
+batch_size: 8            # Teste entre 6 et 10, dépend du modèle exact et de ta RAM
+num_workers: 4
+model: CDiT-XL/2
+lr: 6e-5                 # Un poil plus lent, plus stable
+normalize: True
+grad_clip_val: 10.0
+context_size: 3
+
+distance:
+  min_dist_cat: -64
+  max_dist_cat: 64
+
+len_traj_pred: 32        # Réduction modérée (64 peut passer mais consomme)
+
+image_size: 160
+
+datasets:
+  recon:
+    data_folder: data/recon
+    train: data_splits/recon/train/
+    test: data_splits/recon/test/
+    goals_per_obs: 4
+  # Tu peux activer les autres datasets plus tard, un par un

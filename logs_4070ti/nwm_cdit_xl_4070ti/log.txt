@@ -1,0 +1,4 @@
+[[34m2025-06-23 17:14:36[0m] Experiment directory created at logs_4070ti/nwm_cdit_xl_4070ti
+[[34m2025-06-23 17:14:46[0m] CDiT Parameters: 1,011,291,296
+[[34m2025-06-23 17:31:52[0m] Experiment directory created at logs_4070ti/nwm_cdit_xl_4070ti
+[[34m2025-06-23 17:32:02[0m] CDiT Parameters: 1,011,291,296
