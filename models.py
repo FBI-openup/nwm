@@ -156,7 +156,11 @@ class CDiT(nn.Module):
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.y_embedder = ActionEmbedder(hidden_size)
         num_patches = self.x_embedder.num_patches
-        self.pos_embed = nn.Parameter(torch.zeros(self.context_size + 1, num_patches, hidden_size), requires_grad=True) # for context and for predicted frame
+
+        #self.pos_embed = nn.Parameter(torch.zeros(self.context_size + 1, num_patches, hidden_size), requires_grad=True) # for context and for predicted frame
+
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.context_size + 1, num_patches, hidden_size),requires_grad=True)
+
         self.blocks = nn.ModuleList([CDiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)])
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
         self.time_embedder = TimestepEmbedder(hidden_size)
@@ -230,8 +234,14 @@ class CDiT(nn.Module):
         t: (N,) tensor of diffusion timesteps
         y: (N,) tensor of class labels
         """
-        x = self.x_embedder(x) + self.pos_embed[self.context_size:]
-        x_cond = self.x_embedder(x_cond.flatten(0, 1)).unflatten(0, (x_cond.shape[0], x_cond.shape[1])) + self.pos_embed[:self.context_size]  # (N, T, D), where T = H * W / patch_size ** 2.flatten(1, 2)
+        #x = self.x_embedder(x) + self.pos_embed[self.context_size:]
+
+        x = self.x_embedder(x) + self.pos_embed[:,self.context_size]
+
+        #x_cond = self.x_embedder(x_cond.flatten(0, 1)).unflatten(0, (x_cond.shape[0], x_cond.shape[1])) + self.pos_embed[:self.context_size]  # (N, T, D), where T = H * W / patch_size ** 2.flatten(1, 2)
+        
+        x_cond = self.x_embedder(x_cond.flatten(0, 1)).unflatten(0, (x_cond.shape[0], x_cond.shape[1])) + self.pos_embed[:, self.context_size]
+        
         x_cond = x_cond.flatten(1, 2)
         t = self.t_embedder(t[..., None])
         y = self.y_embedder(y) 

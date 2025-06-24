@@ -24,6 +24,7 @@ import logging
 import os
 import matplotlib.pyplot as plt 
 import yaml
+import atexit
 
 
 import torch.distributed as dist
@@ -68,6 +69,17 @@ def cleanup():
     End DDP training.
     """
     dist.destroy_process_group()
+
+# ==================== PATCH: safe_cleanup in case of crash ====================
+def safe_cleanup():
+    if dist.is_initialized():
+        try:
+            dist.destroy_process_group()
+        except Exception:
+            pass
+
+atexit.register(safe_cleanup)
+# ===================================================================
 
 
 def create_logger(logging_dir):
@@ -135,7 +147,11 @@ def main(args):
     
     # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
     lr = float(config.get('lr', 1e-4))
-    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0)
+
+    #opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0)
+
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0, foreach=False)
+
 
     bfloat_enable = bool(hasattr(args, 'bfloat16') and args.bfloat16)
     if bfloat_enable:
@@ -179,8 +195,12 @@ def main(args):
             scaler.load_state_dict(latest_checkpoint["scaler"])
         
     # ~40% speedup but might leads to worse performance depending on pytorch version
-    if args.torch_compile:
-        model = torch.compile(model)
+
+
+    #if args.torch_compile:
+    #    model = torch.compile(model)
+
+
     model = DDP(model, device_ids=[device])
     diffusion = create_diffusion(timestep_respacing="")  # default: 1000 steps, linear noise schedule
     logger.info(f"CDiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
@@ -274,12 +294,25 @@ def main(args):
             rel_t = rel_t.to(device, non_blocking=True)
             
             with torch.amp.autocast('cuda', enabled=bfloat_enable, dtype=torch.bfloat16):
-                with torch.no_grad():
+                #with torch.no_grad():
                     # Map input images to latent space + normalize latents:
+                 #   B, T = x.shape[:2]
+                  #  x = x.flatten(0,1)
+                   # x = tokenizer.encode(x).latent_dist.sample().mul_(0.18215)
+                    #x = x.unflatten(0, (B, T))
+                
+# ==================== PATCH: safer VAE encoding ====================
+                with torch.no_grad():
                     B, T = x.shape[:2]
-                    x = x.flatten(0,1)
-                    x = tokenizer.encode(x).latent_dist.sample().mul_(0.18215)
-                    x = x.unflatten(0, (B, T))
+                    x = x.flatten(0, 1)  # convert (B, T, C, H, W) → (B*T, C, H, W)
+                    latents = tokenizer.encode(x).latent_dist.sample()
+                    torch.cuda.empty_cache()
+                    x = latents.mul_(0.18215).unflatten(0, (B, T))  # reshape back to (B, T, ...)
+                    del latents
+                    torch.cuda.empty_cache()
+# ===================================================================
+
+
                 
                 num_goals = T - num_cond
                 x_start = x[:, num_cond:].flatten(0, 1)
@@ -289,6 +322,7 @@ def main(args):
                 
                 t = torch.randint(0, diffusion.num_timesteps, (x_start.shape[0],), device=device)
                 model_kwargs = dict(y=y, x_cond=x_cond, rel_t=rel_t)
+                print(torch.cuda.memory_summary(device=None, abbreviated=True))
                 loss_dict = diffusion.training_losses(model, x_start, t, model_kwargs)
                 loss = loss_dict["loss"].mean()
 
@@ -303,6 +337,10 @@ def main(args):
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config['grad_clip_val'])
                 scaler.step(opt)
                 scaler.update()
+# ==================== PATCH: free memory after optimizer step ====================
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+# ===================================================================
             
             update_ema(ema, model.module)
 
@@ -434,4 +472,7 @@ def get_args_parser():
 
 if __name__ == "__main__":
     args = get_args_parser().parse_args()
-    main(args)
+    try:
+        main(args)
+    finally:
+        safe_cleanup()
