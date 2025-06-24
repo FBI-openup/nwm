@@ -322,7 +322,11 @@ def main(args):
                 
                 t = torch.randint(0, diffusion.num_timesteps, (x_start.shape[0],), device=device)
                 model_kwargs = dict(y=y, x_cond=x_cond, rel_t=rel_t)
-                print(torch.cuda.memory_summary(device=None, abbreviated=True))
+                
+                #print(torch.cuda.memory_summary(device=None, abbreviated=True))
+
+                print("Itération")
+
                 loss_dict = diffusion.training_losses(model, x_start, t, model_kwargs)
                 loss = loss_dict["loss"].mean()
 

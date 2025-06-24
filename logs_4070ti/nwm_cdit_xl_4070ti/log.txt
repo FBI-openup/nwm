@@ -50,3 +50,57 @@
 [[34m2025-06-24 14:31:21[0m] Training for 10 epochs...
 [[34m2025-06-24 14:31:21[0m] Beginning epoch 0...
 [[34m2025-06-24 14:42:24[0m] (step=0000100) Train Loss: 0.4485, Train Steps/Sec: 0.15, Samples/Sec: 0.15
+[[34m2025-06-24 14:51:46[0m] (step=0000200) Train Loss: 0.3009, Train Steps/Sec: 0.18, Samples/Sec: 0.18
+[[34m2025-06-24 15:01:31[0m] (step=0000300) Train Loss: 0.2248, Train Steps/Sec: 0.17, Samples/Sec: 0.17
+[[34m2025-06-24 15:11:18[0m] (step=0000400) Train Loss: 0.2371, Train Steps/Sec: 0.17, Samples/Sec: 0.17
+[[34m2025-06-24 15:21:07[0m] (step=0000500) Train Loss: 0.1811, Train Steps/Sec: 0.17, Samples/Sec: 0.17
+[[34m2025-06-24 15:30:40[0m] (step=0000600) Train Loss: 0.2781, Train Steps/Sec: 0.17, Samples/Sec: 0.17
+[[34m2025-06-24 15:40:22[0m] Experiment directory created at logs_4070ti/nwm_cdit_xl_4070ti
+[[34m2025-06-24 15:40:30[0m] CDiT Parameters: 1,011,291,296
+[[34m2025-06-24 15:40:31[0m] Dataset contains 4,501 images
+[[34m2025-06-24 15:40:31[0m] Training for 1 epochs...
+[[34m2025-06-24 15:40:31[0m] Beginning epoch 0...
+[[34m2025-06-24 15:43:34[0m] Experiment directory created at logs_4070ti/nwm_cdit_xl_4070ti
+[[34m2025-06-24 15:43:44[0m] CDiT Parameters: 1,011,291,296
+[[34m2025-06-24 15:43:44[0m] Dataset contains 4,501 images
+[[34m2025-06-24 15:43:44[0m] Training for 1 epochs...
+[[34m2025-06-24 15:43:44[0m] Beginning epoch 0...
+[[34m2025-06-24 15:44:35[0m] Experiment directory created at logs_4070ti/nwm_cdit_xl_4070ti
+[[34m2025-06-24 15:44:43[0m] CDiT Parameters: 1,011,291,296
+[[34m2025-06-24 15:44:43[0m] Dataset contains 4,501 images
+[[34m2025-06-24 15:44:43[0m] Training for 1 epochs...
+[[34m2025-06-24 15:44:43[0m] Beginning epoch 0...
+[[34m2025-06-24 15:47:23[0m] Experiment directory created at logs_4070ti/nwm_cdit_xl_4070ti
+[[34m2025-06-24 15:47:31[0m] CDiT Parameters: 1,011,291,296
+[[34m2025-06-24 15:47:31[0m] Dataset contains 4,501 images
+[[34m2025-06-24 15:47:31[0m] Training for 1 epochs...
+[[34m2025-06-24 15:47:31[0m] Beginning epoch 0...
+[[34m2025-06-24 15:49:10[0m] (step=0000010) Train Loss: 0.9206, Train Steps/Sec: 0.10, Samples/Sec: 0.10
+[[34m2025-06-24 15:50:25[0m] (step=0000020) Train Loss: 0.7434, Train Steps/Sec: 0.13, Samples/Sec: 0.13
+[[34m2025-06-24 15:51:29[0m] Experiment directory created at logs_4070ti/nwm_cdit_xl_4070ti
+[[34m2025-06-24 15:51:37[0m] CDiT Parameters: 1,011,291,296
+[[34m2025-06-24 15:51:37[0m] Dataset contains 4,501 images
+[[34m2025-06-24 15:51:37[0m] Training for 1 epochs...
+[[34m2025-06-24 15:51:37[0m] Beginning epoch 0...
+[[34m2025-06-24 15:53:15[0m] (step=0000010) Train Loss: 0.9203, Train Steps/Sec: 0.10, Samples/Sec: 0.10
+[[34m2025-06-24 15:54:25[0m] (step=0000020) Train Loss: 0.7415, Train Steps/Sec: 0.14, Samples/Sec: 0.14
+[[34m2025-06-24 15:55:26[0m] (step=0000030) Train Loss: 0.4810, Train Steps/Sec: 0.16, Samples/Sec: 0.16
+[[34m2025-06-24 15:56:27[0m] (step=0000040) Train Loss: 0.3169, Train Steps/Sec: 0.16, Samples/Sec: 0.16
+[[34m2025-06-24 15:57:32[0m] (step=0000050) Train Loss: 0.2684, Train Steps/Sec: 0.16, Samples/Sec: 0.16
+[[34m2025-06-24 15:58:39[0m] (step=0000060) Train Loss: 0.2700, Train Steps/Sec: 0.15, Samples/Sec: 0.15
+[[34m2025-06-24 15:59:43[0m] (step=0000070) Train Loss: 0.5250, Train Steps/Sec: 0.16, Samples/Sec: 0.16
+[[34m2025-06-24 16:00:46[0m] (step=0000080) Train Loss: 0.2083, Train Steps/Sec: 0.16, Samples/Sec: 0.16
+[[34m2025-06-24 16:01:43[0m] (step=0000090) Train Loss: 0.3481, Train Steps/Sec: 0.17, Samples/Sec: 0.17
+[[34m2025-06-24 16:02:38[0m] (step=0000100) Train Loss: 0.4058, Train Steps/Sec: 0.18, Samples/Sec: 0.18
+[[34m2025-06-24 16:03:34[0m] (step=0000110) Train Loss: 0.1513, Train Steps/Sec: 0.18, Samples/Sec: 0.18
+[[34m2025-06-24 16:04:32[0m] (step=0000120) Train Loss: 0.3353, Train Steps/Sec: 0.17, Samples/Sec: 0.17
+[[34m2025-06-24 16:05:37[0m] (step=0000130) Train Loss: 0.4759, Train Steps/Sec: 0.16, Samples/Sec: 0.16
+[[34m2025-06-24 16:06:36[0m] (step=0000140) Train Loss: 0.0969, Train Steps/Sec: 0.17, Samples/Sec: 0.17
+[[34m2025-06-24 16:07:35[0m] (step=0000150) Train Loss: 0.4963, Train Steps/Sec: 0.17, Samples/Sec: 0.17
+[[34m2025-06-24 16:08:38[0m] (step=0000160) Train Loss: 0.3398, Train Steps/Sec: 0.16, Samples/Sec: 0.16
+[[34m2025-06-24 16:09:43[0m] (step=0000170) Train Loss: 0.1374, Train Steps/Sec: 0.16, Samples/Sec: 0.16
+[[34m2025-06-24 16:10:41[0m] (step=0000180) Train Loss: 0.3823, Train Steps/Sec: 0.17, Samples/Sec: 0.17
+[[34m2025-06-24 16:11:39[0m] (step=0000190) Train Loss: 0.3733, Train Steps/Sec: 0.17, Samples/Sec: 0.17
+[[34m2025-06-24 16:12:37[0m] (step=0000200) Train Loss: 0.2201, Train Steps/Sec: 0.17, Samples/Sec: 0.17
+[[34m2025-06-24 16:13:36[0m] (step=0000210) Train Loss: 0.3262, Train Steps/Sec: 0.17, Samples/Sec: 0.17
+[[34m2025-06-24 16:14:34[0m] (step=0000220) Train Loss: 0.1131, Train Steps/Sec: 0.17, Samples/Sec: 0.17
