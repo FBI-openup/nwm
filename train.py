@@ -38,6 +38,8 @@ from models import CDiT_models
 from diffusion import create_diffusion
 from datasets import TrainingDataset
 from misc import transform
+from latent_dataset import LatentSequenceDataset
+
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -135,7 +137,10 @@ def main(args):
         logger = create_logger(None)
 
     # Create model:
-    tokenizer = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-ema").to(device)
+
+    #tokenizer = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-ema").to(device)
+    #=====> useless for now
+    
     latent_size = config['image_size'] // 8
 
     assert config['image_size'] % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
@@ -229,21 +234,36 @@ def main(args):
                     else:
                         len_traj_pred=config["len_traj_pred"]
 
-                    dataset = TrainingDataset(
-                        data_folder=data_config["data_folder"],
-                        data_split_folder=data_config[data_split_type],
-                        dataset_name=dataset_name,
-                        image_size=config["image_size"],
-                        min_dist_cat=min_dist_cat,
-                        max_dist_cat=max_dist_cat,
-                        len_traj_pred=len_traj_pred,
+                #==========INSERTION OF LATENTS INSTEAD OF WORKING ON THE IMAGES============
+
+                    dataset = LatentSequenceDataset(
+                        data_root="latents/scand",
                         context_size=config["context_size"],
-                        normalize=config["normalize"],
-                        goals_per_obs=goals_per_obs,
-                        transform=transform,
-                        predefined_index=None,
+                        goals_per_obs=data_config["goals_per_obs"],
+                        len_traj_pred=config["len_traj_pred"],
                         traj_stride=1,
                     )
+
+                #===========================================================================
+
+
+                    #dataset = TrainingDataset(
+                    #    data_folder=data_config["data_folder"],
+                    #    data_split_folder=data_config[data_split_type],
+                    #    dataset_name=dataset_name,
+                    #    image_size=config["image_size"],
+                    #    min_dist_cat=min_dist_cat,
+                    #    max_dist_cat=max_dist_cat,
+                    #    len_traj_pred=len_traj_pred,
+                    #    context_size=config["context_size"],
+                    #    normalize=config["normalize"],
+                    #    goals_per_obs=goals_per_obs,
+                    #    transform=transform,
+                    #    predefined_index=None,
+                    #    traj_stride=1,
+                    #)
+
+
                     if data_split_type == "train":
                         train_dataset.append(dataset)
                     else:
@@ -302,14 +322,16 @@ def main(args):
                     #x = x.unflatten(0, (B, T))
                 
 # ==================== PATCH: safer VAE encoding ====================
-                with torch.no_grad():
-                    B, T = x.shape[:2]
-                    x = x.flatten(0, 1)  # convert (B, T, C, H, W) → (B*T, C, H, W)
-                    latents = tokenizer.encode(x).latent_dist.sample()
-                    torch.cuda.empty_cache()
-                    x = latents.mul_(0.18215).unflatten(0, (B, T))  # reshape back to (B, T, ...)
-                    del latents
-                    torch.cuda.empty_cache()
+                #with torch.no_grad():
+                    #x = x.flatten(0, 1)  # convert (B, T, C, H, W) → (B*T, C, H, W)
+                    #latents = tokenizer.encode(x).latent_dist.sample()
+                    #torch.cuda.empty_cache()                    
+                    #x = latents.mul_(0.18215).unflatten(0, (B, T))  # reshape back to (B, T, ...)
+                B, T = x.shape[:2]
+                x = x.to(device, non_blocking=True)
+
+                    #del latents
+                    #torch.cuda.empty_cache()
 # ===================================================================
 
 

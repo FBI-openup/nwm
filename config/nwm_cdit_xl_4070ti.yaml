@@ -20,9 +20,9 @@ len_traj_pred: 32        # Réduction modérée (64 peut passer mais consomme)
 image_size: 160
 
 datasets:
-  recon:
+  scand:
     data_folder: data/scand
     train: data_splits/scand/train/
     test: data_splits/scand/test/
     goals_per_obs: 1
-  # Tu peux activer les autres datasets plus tard, un par un
+
