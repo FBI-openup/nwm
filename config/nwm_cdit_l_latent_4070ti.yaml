@@ -1,11 +1,11 @@
-run_name: nwm_cdit_b_latents_4070ti
+run_name: nwm_cdit_l_latents_4070ti
 
 # training setup
 results_dir: logs_4070ti_latents
 train: True
-batch_size: 12              # 🚀 tu peux maintenant augmenter
-num_workers: 8
-model: CDiT-B/2
+batch_size: 4              # to tune regarding the performance
+num_workers: 4
+model: CDiT-L/2
 lr: 6e-5
 normalize: True
 grad_clip_val: 10.0

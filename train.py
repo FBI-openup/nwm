@@ -315,7 +315,8 @@ def main(args):
             y = y.to(device, non_blocking=True)
             rel_t = rel_t.to(device, non_blocking=True)
             
-            with torch.amp.autocast('cuda', enabled=bfloat_enable, dtype=torch.bfloat16):
+            
+        
                 #with torch.no_grad():
                     # Map input images to latent space + normalize latents:
                  #   B, T = x.shape[:2]
