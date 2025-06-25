@@ -26,7 +26,6 @@ import matplotlib.pyplot as plt
 import yaml
 import atexit
 
-
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, ConcatDataset
@@ -109,6 +108,9 @@ def main(args):
     """
     Trains a new CDiT model.
     """
+
+    global_time= time()
+
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
 
     # Setup DDP:
@@ -413,7 +415,8 @@ def main(args):
             if train_steps % args.eval_every == 0 and train_steps > 0:
                 eval_start_time = time()
                 save_dir = os.path.join(experiment_dir, str(train_steps))
-                sim_score = evaluate(ema, tokenizer, diffusion, test_dataset, rank, config["batch_size"], config["num_workers"], latent_size, device, save_dir, args.global_seed, bfloat_enable, num_cond)
+                vae_eval = tokenizer if config.get("eval_decode",True) else None
+                sim_score = evaluate(ema, vae_eval, diffusion, test_dataset, rank, config["batch_size"], config["num_workers"], latent_size, device, save_dir, args.global_seed, bfloat_enable, num_cond)
                 dist.barrier()
                 eval_end_time = time()
                 eval_time = eval_end_time - eval_start_time
@@ -421,7 +424,10 @@ def main(args):
 
     model.eval()  # important! This disables randomized embedding dropout
     # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
+    final_time=time()
+    total_duration= final_time -global_time
 
+    logger.info(f"Total time process : {total_duration:.2f}")
     logger.info("Done!")
     cleanup()
 
@@ -448,40 +454,58 @@ def evaluate(model, vae, diffusion, test_dataloaders, rank, batch_size, num_work
     eval_model, _ = dreamsim(pretrained=True)
     score = torch.tensor(0.).to(device)
     n_samples = torch.tensor(0).to(device)
+    total_latent_mse= 0
+    n_steps=0
 
     # Run for 1 step
     for x, y, rel_t in loader:
         x = x.to(device)
         y = y.to(device)
         rel_t = rel_t.to(device).flatten(0, 1)
-        with torch.amp.autocast('cuda', enabled=True, dtype=torch.bfloat16):
+
+        with torch.amp.autocast('cuda', enabled=True, dtype=torch.bfloat16 if bfloat_enable else torch.float16):
             B, T = x.shape[:2]
             num_goals = T - num_cond
+
             samples = model_forward_wrapper((model, diffusion, vae), x, y, num_timesteps=None, latent_size=latent_size, device=device, num_cond=num_cond, num_goals=num_goals, rel_t=rel_t)
-            x_start_pixels = x[:, num_cond:].flatten(0, 1)
-            x_cond_pixels = x[:, :num_cond].unsqueeze(1).expand(B, num_goals, num_cond, x.shape[2], x.shape[3], x.shape[4]).flatten(0, 1)
-            samples = samples * 0.5 + 0.5
-            x_start_pixels = x_start_pixels * 0.5 + 0.5
-            x_cond_pixels = x_cond_pixels * 0.5 + 0.5
-            res = eval_model(x_start_pixels, samples)
-            score += res.sum()
-            n_samples += len(res)
+            if vae is not None:
+                x_start_pixels = x[:, num_cond:].flatten(0, 1)
+                x_cond_pixels = x[:, :num_cond].unsqueeze(1).expand(B, num_goals, num_cond, x.shape[2], x.shape[3], x.shape[4]).flatten(0, 1)
+                samples = samples * 0.5 + 0.5
+                x_start_pixels = x_start_pixels * 0.5 + 0.5
+                x_cond_pixels = x_cond_pixels * 0.5 + 0.5
+                res = eval_model(x_start_pixels, samples)
+                score += res.sum()
+                n_samples += len(res)
+            else:
+                target = x[:, num_cond:].flatten(0, 1)
+                pred = samples
+                mse = torch.nn.functional.mse_loss(pred, target, reduction='mean')
+
+                total_latent_mse += mse.item()
+                n_steps += 1
         break
     
     if rank == 0:
         os.makedirs(save_dir, exist_ok=True)
-        for i in range(min(samples.shape[0], 10)):
-            _, ax = plt.subplots(1,3,dpi=256)
-            ax[0].imshow((x_cond_pixels[i, -1].permute(1,2,0).cpu().numpy()*255).astype('uint8'))
-            ax[1].imshow((x_start_pixels[i].permute(1,2,0).cpu().numpy()*255).astype('uint8'))
-            ax[2].imshow((samples[i].permute(1,2,0).cpu().float().numpy()*255).astype('uint8'))
-            plt.savefig(f'{save_dir}/{i}.png')
-            plt.close()
-
-    dist.all_reduce(score)
-    dist.all_reduce(n_samples)
-    sim_score = score/n_samples
-    return sim_score
+        if vae is not None:
+            for i in range(min(samples.shape[0], 10)):
+                _, ax = plt.subplots(1,3,dpi=256)
+                ax[0].imshow((x_cond_pixels[i, -1].permute(1,2,0).cpu().numpy()*255).astype('uint8'))
+                ax[1].imshow((x_start_pixels[i].permute(1,2,0).cpu().numpy()*255).astype('uint8'))
+                ax[2].imshow((samples[i].permute(1,2,0).cpu().float().numpy()*255).astype('uint8'))
+                plt.savefig(f'{save_dir}/{i}.png')
+                plt.close()
+    
+    
+    if vae is not None:
+        dist.all_reduce(score)
+        dist.all_reduce(n_samples)
+        sim_score = score/n_samples
+        return sim_score
+    else:
+        avg_mse = total_latent_mse / max(n_steps, 1)
+        return torch.tensor(avg_mse).to(device)
 
 def get_args_parser():
     parser = argparse.ArgumentParser()
