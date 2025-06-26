@@ -17,6 +17,7 @@ logs_4070ti/
 actions.txt
 latents
 logs_4070ti_latents
+latent-encoding/
 
 *.png
 *.jpg
