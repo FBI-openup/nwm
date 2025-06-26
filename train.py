@@ -174,7 +174,10 @@ def main(args):
             raise ValueError("Resuming from checkpoint, this might override latest.pth.tar!!")
         latest_path = latest_path if os.path.isfile(latest_path) else config.get('from_checkpoint', 0)
         print("Loading model from ", latest_path)
-        latest_checkpoint = torch.load(latest_path, map_location=device, weights_only=False) 
+
+        map_loc= f"cuda:{device}" if isinstance(device, int) else device  #device was an int bad boy :'( [should be a str]
+
+        latest_checkpoint = torch.load(latest_path, map_location=map_loc, weights_only=False) 
 
         if "model" in latest_checkpoint:
             model_ckp = {k.replace('_orig_mod.', ''):v for k,v in latest_checkpoint['model'].items()}
@@ -315,7 +318,7 @@ def main(args):
             y = y.to(device, non_blocking=True)
             rel_t = rel_t.to(device, non_blocking=True)
             
-            
+            with torch.amp.autocast('cuda', enabled=bfloat_enable, dtype=torch.bfloat16):
         
                 #with torch.no_grad():
                     # Map input images to latent space + normalize latents:
