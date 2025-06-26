@@ -11,9 +11,9 @@ logs
 models
 nwm/data
 data_splits/**/dataset*.pkl
-data
+data/
 Miniconda3-latest-linux-x86_64.sh
-logs_4070ti
+logs_4070ti/
 actions.txt
 latents
 logs_4070ti_latents

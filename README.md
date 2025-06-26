@@ -11,9 +11,9 @@ We will suppose that you already have a set-up machine to work with pytorch and 
 If that's not the case, check the [Requirements] section to setup the virtual environment used in this repo.
 
 ## Main changes to the initial code:
-    - We separated the VAE processing from the training process so that the models only takes latents as input instead of images and outputs latents.
-    - We added directly added the pre-processing module in order to not have to go back and forth between different repos.
-    - Other changes to come...
+- We separated the VAE processing from the training process so that the models only takes latents as input instead of images and outputs latents.
+- We added directly added the pre-processing module in order to not have to go back and forth between different repos.
+- Other changes to come...
 
 
 ## Setup
@@ -34,7 +34,7 @@ mamba activate nwm-env
 As we separated the VAE processing from the training process, the data processing falls in 2 main parts. As our ressources were limited, we did not look to scale up the images.
 
 #### Bag Processing
-We mainly trained on the [SCAND](https://dataverse.tdl.org/dataset.xhtml?persistentId=doi:10.18738/T8/0PRYRH) and the [NavWare](https://search-data.ubfc.fr/FR-13002091000019-2025-05-22_NavWareSet-A-Dataset-of-Socially-Compliant-and.html#data_deposit) dataset.
+We mainly trained on the [SCAND](https://dataverse.tdl.org/dataset.xhtml?persistentId=doi:10.18738/T8/0PRYRH) and the [NavWare](https://anr-navware.github.io/navwareset) dataset.
 
 In a first part you might want to process the Rosbags by following the instruction in [VisualNav-Transformer](https://github.com/robodhruv/visualnav-transformer) repo which we integrated as a submodule in ```  ./latent-encoding```. We removed the unused part and only kept the Bag processing part.
 You might need to initiate another venv of its own.
@@ -71,7 +71,7 @@ mv <dataset_name> ../../../data
 
 #### VAE Pre-processing
 
-To pre-process the images into ready-to-use latents you juste need to execute `encode_latents.py` with the relevant arguments and you should end up with the following structure:
+To pre-process the images into ready-to-use latents you just need to execute `encode_latents.py` with the relevant arguments and you should end up with the following structure:
 
 ```
 ├──./latents
@@ -90,3 +90,7 @@ To pre-process the images into ready-to-use latents you juste need to execute `e
           	├── 1.pt
     	    └── ...
 ```  
+
+## Training setup
+
+In order to train
