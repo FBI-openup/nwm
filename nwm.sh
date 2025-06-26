@@ -1,36 +1,26 @@
 #!/bin/bash
-
-# --- SLURM 资源申请指令 ---
-#SBATCH --job-name=test_hello_nwm
+#SBATCH --job-name=my_l40s_training
 #SBATCH --partition=ENSTA-l40s
 #SBATCH --gpus=1
-#SBATCH --time=00:05:00
+#SBATCH --time=04:00:00
 #SBATCH --nodelist=ensta-l40s01.r2.enst.fr
-#SBATCH --output=hello_job_%j.out
-#SBATCH --error=hello_job_%j.err
+#SBATCH --output=l40s_job_%j.out
+#SBATCH --error=l40s_job_%j.err
 
 echo "任务开始，运行在节点: $(hostname)"
-echo "SLURM 任务ID: $SLURM_JOB_ID"
+echo "当前时间: $(date)"
 
-# 获取当前环境名（适用于 conda >= 4.6）
-CURRENT_ENV=$(conda info --envs | awk '{if ($1 == "*") print $2}')
+# 正确加载 conda 环境
+source ~/miniconda3/etc/profile.d/conda.sh || { echo "❌ 无法加载 conda.sh"; exit 1; }
+conda activate nwm-env || { echo "❌ conda activate 失败"; exit 1; }
 
-# 只在不处于 nwm-env 时激活它
-if [[ "$CURRENT_ENV" != "nwm-env" ]]; then
-    echo "当前环境为 '$CURRENT_ENV'，正在激活 nwm-env"
-    source /home/ensta-boyuan.zhang/miniconda3/bin/activate nwm-env
-else
-    echo "已经在 nwm-env 中，无需重新激活"
-fi
 
-# 跳转到你的工作目录（绝对路径更保险）
-cd /home/ensta-boyuan.zhang/boyuan/nwm
+# 进入代码目录（使用绝对路径）
+cd ${HOME}/boyuan/nwm || { echo "❌ 路径不存在"; exit 1; }
 
-# 简单 hello world 测试
-echo "Hello from SLURM job!"
-python -c "print('Hello from Python in SLURM job.')"
 
-# 可选：真正运行训练命令
-# python train.py --data ./log --epochs 100
+# 测试命令
+echo "即将运行 Python hello world"
+python -c "print('Hello from Python inside SLURM')"
 
 echo "任务结束"
