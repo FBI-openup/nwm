@@ -3,7 +3,7 @@ run_name: nwm_cdit_b_latents_4070ti
 # training setup
 results_dir: logs_4070ti_latents
 train: True
-batch_size: 12              # 🚀 tu peux maintenant augmenter
+batch_size: 12 
 num_workers: 8
 model: CDiT-B/2
 lr: 6e-5
@@ -21,7 +21,8 @@ image_size: 160            # requis uniquement pour compatibilité
 
 datasets:
   scand:
-    data_folder: latents/scand   # <- ici on pointe vers les latents
-    train: "AAAAA"
-    test: ""         
+    latent_folder: latents/scand
+    train: data_splits/scand/train
+    test: data_splits/scand/test
+    traj_names: traj_names.txt
     goals_per_obs: 1

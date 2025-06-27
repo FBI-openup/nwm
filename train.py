@@ -37,7 +37,7 @@ from models import CDiT_models
 from diffusion import create_diffusion
 from datasets import TrainingDataset
 from misc import transform
-from latent_dataset import LatentSequenceDataset
+from latent_dataset import LatentTrainingDataset
 
 
 #################################################################################
@@ -241,8 +241,13 @@ def main(args):
 
                 #==========INSERTION OF LATENTS INSTEAD OF WORKING ON THE IMAGES============
 
-                    dataset = LatentSequenceDataset(
-                        data_root="latents/scand",
+                    dataset = LatentTrainingDataset(
+                        latent_folder=data_config["latent_folder"],
+                        data_split_folder=data_config[data_split_type],
+                        dataset_name= dataset_name,
+                        min_dist_cat=min_dist_cat,
+                        max_dist_cat=max_dist_cat,
+                        traj_names= data_config["traj_names"],
                         context_size=config["context_size"],
                         goals_per_obs=data_config["goals_per_obs"],
                         len_traj_pred=config["len_traj_pred"],
