@@ -93,4 +93,10 @@ To pre-process the images into ready-to-use latents you just need to execute `en
 
 ## Training setup
 
-In order to train
+In order to train...
+
+Once everything is ready to go you can run this command:
+```bash
+python train.py   --config config/nwm_cdit_b_latent_4070ti.yaml --log-every 100   --bfloat16 0   --epochs 60   --torch-compile 1
+```
+
