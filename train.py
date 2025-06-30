@@ -205,10 +205,8 @@ def main(args):
             scaler.load_state_dict(latest_checkpoint["scaler"])
         
     # ~40% speedup but might leads to worse performance depending on pytorch version
-
-
-    #if args.torch_compile:
-    #    model = torch.compile(model)
+    if args.torch_compile:
+        model = torch.compile(model)
 
 
     model = DDP(model, device_ids=[device])
@@ -242,16 +240,20 @@ def main(args):
                 #==========INSERTION OF LATENTS INSTEAD OF WORKING ON THE IMAGES============
 
                     dataset = LatentTrainingDataset(
-                        latent_folder=data_config["latent_folder"],
+                        data_folder=data_config["latent_folder"],
                         data_split_folder=data_config[data_split_type],
                         dataset_name= dataset_name,
+                        image_size= config["image_size"],
                         min_dist_cat=min_dist_cat,
                         max_dist_cat=max_dist_cat,
-                        traj_names= data_config["traj_names"],
-                        context_size=config["context_size"],
-                        goals_per_obs=data_config["goals_per_obs"],
-                        len_traj_pred=config["len_traj_pred"],
+                        len_traj_pred=len_traj_pred,
+                        normalize= config["normalize"],
                         traj_stride=1,
+                        context_size=config["context_size"],
+                        traj_names= data_config["traj_names"],
+                        goals_per_obs=goals_per_obs,
+
+
                     )
 
                 #===========================================================================

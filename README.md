@@ -79,16 +79,19 @@ To pre-process the images into ready-to-use latents you just need to execute `en
     │   ├── <name_of_traj1>
     │   │   ├── 0.pt
     │   │   ├── 1.pt
-    │   │   └── ...
+    │   │   ├── ...
+    │   │   └── traj_data.pkl
     │   ├── <name_of_traj2>
     │   │   ├── 0.pt
     │   │   ├── 1.pt
-    │   │   └── ...
+    │   │   ├── ...
+    │   │   └── traj_data.pkl
     │   ...
     └── └── <name_of_trajN>
         	├── 0.pt
-          	├── 1.pt
-    	    └── ...
+            ├── 1.pt
+            ├── ...
+            └── traj_data.pkl
 ```  
 
 ## Training setup

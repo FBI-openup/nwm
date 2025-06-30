@@ -19,7 +19,7 @@ from diffusers.models import AutoencoderKL
 import misc
 import distributed as dist
 from models import CDiT_models
-from datasets import EvalDataset
+from latent_dataset import LatentEvalDataset
 from PIL import Image
 
 
@@ -43,7 +43,7 @@ def get_dataset_eval(config, dataset_name, eval_type, predefined_index=True):
         predefined_index=None
 
     
-    dataset = EvalDataset(
+    dataset = LatentEvalDataset(
                 data_folder=data_config["data_folder"],
                 data_split_folder=data_config["test"],
                 dataset_name=dataset_name,
@@ -55,7 +55,7 @@ def get_dataset_eval(config, dataset_name, eval_type, predefined_index=True):
                 context_size=config["eval_context_size"],
                 normalize=config["normalize"],
                 transform=misc.transform,
-                goals_per_obs=4,
+                goals_per_obs=1,
                 predefined_index=predefined_index,
                 traj_names='traj_names.txt'
             )
