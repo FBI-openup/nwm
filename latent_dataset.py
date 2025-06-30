@@ -1,66 +1,107 @@
-import os
-import torch
-import pickle
-import numpy as np
-from typing import List, Tuple
-from torch.utils.data import Dataset
-from misc import normalize_data, to_local_coords, angle_difference, get_delta_np
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
 
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+# --------------------------------------------------------
+# References:
+# NoMaD, GNM, ViNT: https://github.com/robodhruv/visualnav-transformer
+# --------------------------------------------------------
+
+import numpy as np
+import torch
+import os
+from PIL import Image
+from typing import Tuple
+import yaml
+import pickle
+import tqdm
+from torch.utils.data import Dataset
+from misc import angle_difference, get_data_path, get_delta_np, normalize_data, to_local_coords
 
 class LatentBaseDataset(Dataset):
     def __init__(
         self,
-        latent_folder: str,
+        data_folder: str,
         data_split_folder: str,
         dataset_name: str,
-        context_size: int,
-        len_traj_pred: int,
-        traj_stride: int,
+        image_size: Tuple[int, int],
         min_dist_cat: int,
         max_dist_cat: int,
+        len_traj_pred: int,
+        traj_stride: int, 
+        context_size: int,
+        #transform: object,
         traj_names: str,
         normalize: bool = True,
-        predefined_index: str = None,
+        predefined_index: list = None,
         goals_per_obs: int = 1,
     ):
-        super().__init__()
-        self.latent_folder = latent_folder
+        self.data_folder = data_folder
+        self.data_split_folder = data_split_folder
         self.dataset_name = dataset_name
-        self.context_size = context_size
-        self.len_traj_pred = len_traj_pred
-        self.traj_stride = traj_stride
         self.goals_per_obs = goals_per_obs
-        self.min_dist_cat = min_dist_cat
-        self.max_dist_cat = max_dist_cat
-        self.normalize = normalize
+
 
         traj_names_file = os.path.join(data_split_folder, traj_names)
         with open(traj_names_file, "r") as f:
-            self.traj_names = [line.strip() for line in f if line.strip()]
+            file_lines = f.read()
+            self.traj_names = file_lines.split("\n")
+        if "" in self.traj_names:
+            self.traj_names.remove("")
 
+        self.image_size = image_size
+        self.distance_categories = list(range(min_dist_cat, max_dist_cat + 1))
+        self.min_dist_cat = self.distance_categories[0]
+        self.max_dist_cat = self.distance_categories[-1]
+        self.len_traj_pred = len_traj_pred
+        self.traj_stride = traj_stride
+
+        self.context_size = context_size
+        self.normalize = normalize
+
+        # load data/data_config.yaml
+        with open("config/data_config.yaml", "r") as f:
+            all_data_config = yaml.safe_load(f)
+
+        dataset_names = list(all_data_config.keys())
+        dataset_names.sort()
+        # use this index to retrieve the dataset name from the data_config.yaml
+        self.data_config = all_data_config[self.dataset_name]
+        #self.transform = transform
+        self._load_index(predefined_index)
+        self.ACTION_STATS = {}
+        for key in all_data_config['action_stats']:
+            self.ACTION_STATS[key] = np.expand_dims(all_data_config['action_stats'][key], axis=0)
+
+    def _load_index(self, predefined_index) -> None:
+        """
+        Generates a list of tuples of (obs_traj_name, goal_traj_name, obs_time, goal_time) for each observation in the dataset
+        """
         if predefined_index:
+            print(f"****** Using a predefined evaluation index... {predefined_index}******")
             with open(predefined_index, "rb") as f:
-                self.index_to_data, self.goals_index = pickle.load(f)
+                self.index_to_data = pickle.load(f)
+                return
         else:
-            self.index_to_data, self.goals_index = self._build_index()
-            index_path = os.path.join(
-                data_split_folder,
-                f"dataset_dist_{min_dist_cat}_to_{max_dist_cat}_n{context_size}_len_traj_pred_{len_traj_pred}.pkl",
+            print("****** Evaluating from NON PREDEFINED index... ******")
+            index_to_data_path = os.path.join(
+                self.data_split_folder,
+                f"dataset_dist_{self.min_dist_cat}_to_{self.max_dist_cat}_n{self.context_size}_len_traj_pred_{self.len_traj_pred}.pkl",
             )
-            with open(index_path, "wb") as f:
+            
+            self.index_to_data, self.goals_index = self._build_index()
+            with open(index_to_data_path, "wb") as f:
                 pickle.dump((self.index_to_data, self.goals_index), f)
 
-    def _get_trajectory(self, trajectory_name: str):
-        with open(os.path.join(self.latent_folder, trajectory_name, "traj_data.pkl"), "rb") as f:
-            traj_data = pickle.load(f)
-        for k, v in traj_data.items():
-            traj_data[k] = v.astype("float")
-        return traj_data
-
-    def _build_index(self):
-        index = []
+    def _build_index(self, use_tqdm: bool = False):
+        """
+        Build an index consisting of tuples (trajectory name, time, max goal distance)
+        """
+        samples_index = []
         goals_index = []
-        for traj_name in self.traj_names:
+
+        for traj_name in tqdm.tqdm(self.traj_names, disable=not use_tqdm, dynamic_ncols=True):
             traj_data = self._get_trajectory(traj_name)
             traj_len = len(traj_data["position"])
             for goal_time in range(0, traj_len):
@@ -71,105 +112,217 @@ class LatentBaseDataset(Dataset):
             for curr_time in range(begin_time, end_time, self.traj_stride):
                 max_goal_distance = min(self.max_dist_cat, traj_len - curr_time - 1)
                 min_goal_distance = max(self.min_dist_cat, -curr_time)
-                index.append((traj_name, curr_time, min_goal_distance, max_goal_distance))
-        return index, goals_index
+                samples_index.append((traj_name, curr_time, min_goal_distance, max_goal_distance))
 
-    def __len__(self):
+        return samples_index, goals_index
+  
+    def _get_trajectory(self, trajectory_name):
+        with open(os.path.join(self.data_folder, trajectory_name, "traj_data.pkl"), "rb") as f:
+            traj_data = pickle.load(f)
+        for k,v in traj_data.items():
+            traj_data[k] = v.astype('float')
+        return traj_data
+
+    def __len__(self) -> int:
         return len(self.index_to_data)
 
-    def _compute_actions(self, meta: dict, curr_time: int) -> np.ndarray:
-        positions = np.array(meta["position"])
-        yaws = np.array(meta["yaw"])
-        start = curr_time
-        end = curr_time + self.len_traj_pred + 1
-        waypos = to_local_coords(positions[start:end], positions[start], yaws[start])
-        wayyaw = angle_difference(yaws[start], yaws[start:end])
-        return np.concatenate([waypos, wayyaw.reshape(-1, 1)], axis=-1)
+    def _compute_actions(self, traj_data, curr_time, goal_time):
+        start_index = curr_time
+        end_index = curr_time + self.len_traj_pred + 1
+        yaw = traj_data["yaw"][start_index:end_index]
+        positions = traj_data["position"][start_index:end_index]
+        goal_pos = traj_data["position"][goal_time]
+        goal_yaw = traj_data["yaw"][goal_time]
 
+        if len(yaw.shape) == 2:
+            yaw = yaw.squeeze(1)
+
+        if yaw.shape != (self.len_traj_pred + 1,):
+            raise ValueError("is used?")
+            # const_len = self.len_traj_pred + 1 - yaw.shape[0]
+            # yaw = np.concatenate([yaw, np.repeat(yaw[-1], const_len)])
+            # positions = np.concatenate([positions, np.repeat(positions[-1][None], const_len, axis=0)], axis=0)
+
+        waypoints_pos = to_local_coords(positions, positions[0], yaw[0])
+        waypoints_yaw = angle_difference(yaw[0], yaw)
+        actions = np.concatenate([waypoints_pos, waypoints_yaw.reshape(-1, 1)], axis=-1)
+        actions = actions[1:]
+        
+        goal_pos = to_local_coords(goal_pos, positions[0], yaw[0])
+        goal_yaw = angle_difference(yaw[0], goal_yaw)
+        
+        if self.normalize:
+            actions[:, :2] /= self.data_config["metric_waypoint_spacing"]
+            goal_pos[:, :2] /= self.data_config["metric_waypoint_spacing"]
+        
+        goal_pos = np.concatenate([goal_pos, goal_yaw.reshape(-1, 1)], axis=-1)
+        return actions, goal_pos    
 
 class LatentTrainingDataset(LatentBaseDataset):
-    def __getitem__(self, index: int):
-        traj_name, curr_time, min_goal_dist, max_goal_dist = self.index_to_data[index]
-        traj_path = os.path.join(self.latent_folder, traj_name)
-        pkl_path = os.path.join(traj_path, "traj_data.pkl")
-        with open(pkl_path, "rb") as f:
-            meta = pickle.load(f)
+    def __init__(
+        self,
+        data_folder: str,
+        data_split_folder: str,
+        dataset_name: str,
+        image_size: Tuple[int, int],
+        min_dist_cat: int,
+        max_dist_cat: int,
+        len_traj_pred: int,
+        traj_stride: int, 
+        context_size: int,
+        #transform: object,
+        traj_names: str = 'traj_names.txt',
+        normalize: bool = True,
+        predefined_index: list = None,
+        goals_per_obs: int = 1,
+    ):
+        super().__init__(data_folder, data_split_folder, dataset_name, image_size, min_dist_cat, max_dist_cat,
+            len_traj_pred, traj_stride, context_size, #transform,
+              traj_names, normalize, predefined_index, goals_per_obs)
+        
 
-        goal_offsets = np.random.randint(min_goal_dist, max_goal_dist + 1, size=(self.goals_per_obs,))
-        goal_times = (goal_offsets + curr_time).tolist()
-        rel_time = goal_offsets.astype(np.float32) / float(self.len_traj_pred)
 
-        indices = list(range(curr_time - self.context_size + 1, curr_time + 1)) + goal_times
-        latents = []
-        for t in indices:
-            pt_path = os.path.join(traj_path, f"{t}.pt")
-            data = torch.load(pt_path)
-            latents.append(data["latent"].unsqueeze(0) if isinstance(data, dict) else data.unsqueeze(0))
-        x = torch.cat(latents, dim=0)
+    def __getitem__(self, i: int) -> Tuple[torch.Tensor]:
+        try:
+            f_curr, curr_time, min_goal_dist, max_goal_dist = self.index_to_data[i]
+            goal_offset = np.random.randint(min_goal_dist, max_goal_dist + 1, size=(self.goals_per_obs))
+            goal_time = (curr_time + goal_offset).astype('int')
+            rel_time = (goal_offset).astype('float')/(128.) # TODO: refactor, currently a fixed const
 
-        actions = self._compute_actions(meta, curr_time)
-        goal_vec = actions[self.context_size:self.context_size + self.goals_per_obs]
+            context_times = list(range(curr_time - self.context_size + 1, curr_time + 1))
+            context = [(f_curr, t) for t in context_times] + [(f_curr, t) for t in goal_time]
 
-        if self.normalize:
-            stats = {
-                'mean': np.array([-0.00716454,  0.00666485]),
-                'std': np.array([3.05594113, 2.01350649])
-            }  # fixed stats copied from original script
-            goal_vec[:, :2] = (goal_vec[:, :2] - stats['mean']) / stats['std']
+            #obs_image = torch.stack([self.transform(Image.open(get_data_path(self.data_folder, f, t))) for f, t in context])
+            obs_latents = torch.stack([torch.load(os.path.join(self.data_folder, self.dataset_name, f_curr, f"{t}.pt"), map_location='cpu').float()for t in context])
+                # (context + goals, latent_dim)
 
-        return x, torch.tensor(goal_vec, dtype=torch.float32), torch.tensor(rel_time, dtype=torch.float32)
+            # Load other trajectory data
+            curr_traj_data = self._get_trajectory(f_curr)
 
+            # Compute actions
+            _, goal_pos = self._compute_actions(curr_traj_data, curr_time, goal_time)
+            goal_pos[:, :2] = normalize_data(goal_pos[:, :2], self.ACTION_STATS)
+
+            return (
+                obs_latents,
+                torch.as_tensor(goal_pos, dtype=torch.float32),
+                torch.as_tensor(rel_time, dtype=torch.float32),
+            )
+        except Exception as e:
+            print(f"Exception in {self.dataset_name}", e)
+            raise Exception(e)
+        
 
 class LatentEvalDataset(LatentBaseDataset):
-    def __init__(self, latent_folder: str, traj_names: List[str]):
-        self.latent_folder = latent_folder
-        self.traj_names = traj_names
-        self.indexes = []
-        for traj in traj_names:
-            files = sorted(f for f in os.listdir(os.path.join(latent_folder, traj)) if f.endswith(".pt"))
-            for fname in files:
-                idx = int(fname.replace(".pt", ""))
-                self.indexes.append((traj, idx))
+    def __init__(
+        self,
+        data_folder: str,
+        data_split_folder: str,
+        dataset_name: str,
+        image_size: Tuple[int, int],
+        min_dist_cat: int,
+        max_dist_cat: int,
+        len_traj_pred: int,
+        traj_stride: int, 
+        context_size: int,
+        #transform: object,
+        traj_names: str,
+        normalize: bool = True,
+        predefined_index: list = None,
+        goals_per_obs: int = 1,
+    ):
+        super().__init__(data_folder, data_split_folder, dataset_name, image_size, min_dist_cat, max_dist_cat,
+            len_traj_pred, traj_stride, context_size, #transform,
+              traj_names, normalize, predefined_index, goals_per_obs)
+  
+    def __getitem__(self, i: int) -> Tuple[torch.Tensor]:
+        try:
+            f_curr, curr_time, _, _ = self.index_to_data[i]
+            context_times = list(range(curr_time - self.context_size + 1, curr_time + 1))
+            pred_times = list(range(curr_time + 1, curr_time + self.len_traj_pred + 1))
+            
+            context = [(f_curr, t) for t in context_times]
+            pred = [(f_curr, t) for t in pred_times]
 
-    def __len__(self):
-        return len(self.indexes)
+            #obs_image = torch.stack([self.transform(Image.open(get_data_path(self.data_folder, f, t))) for f, t in context])
+            obs_latents = torch.stack([torch.load(os.path.join(self.data_folder, self.dataset_name, f_curr, f"{t}.pt"), map_location='cpu').float()for t in context])
+            
+            
+            #pred_image = torch.stack([self.transform(Image.open(get_data_path(self.data_folder, f, t))) for f, t in pred])
+            pred_latents = torch.stack([torch.load(os.path.join(self.data_folder, self.dataset_name, f_curr, f"{t}.pt"), map_location='cpu').float()for t in pred])
 
-    def __getitem__(self, index: int):
-        traj, idx = self.indexes[index]
-        traj_path = os.path.join(self.latent_folder, traj)
-        latent_path = os.path.join(traj_path, f"{idx}.pt")
-        data = torch.load(latent_path)
-        latent = data["latent"] if isinstance(data, dict) else data
+            curr_traj_data = self._get_trajectory(f_curr)
 
-        with open(os.path.join(traj_path, "traj_data.pkl"), "rb") as f:
-            meta = pickle.load(f)
-        info = {
-            "timestamp": meta["timestamps"][idx],
-            "position": meta["position"][idx],
-            "yaw": meta["yaw"][idx],
-        }
-        return latent, info
+            # Compute actions
+            actions, _ = self._compute_actions(curr_traj_data, curr_time, np.array([curr_time+1])) # last argument is dummy goal
+            actions[:, :2] = normalize_data(actions[:, :2], self.ACTION_STATS)
+            delta = get_delta_np(actions)
 
+            return (
+                torch.tensor([i], dtype=torch.float32), # for logging purposes
+                obs_latents,
+                pred_latents,
+                torch.as_tensor(delta, dtype=torch.float32),
+            )
+        except Exception as e:
+            print(f"Exception in {self.dataset_name}", e)
+            raise Exception(e)
+        
+class LatentTrajectoryEvalDataset(LatentBaseDataset):
+    def __init__(
+        self,
+        data_folder: str,
+        data_split_folder: str,
+        dataset_name: str,
+        image_size: Tuple[int, int],
+        min_dist_cat: int,
+        max_dist_cat: int,
+        len_traj_pred: int,
+        traj_stride: int, 
+        context_size: int,
+        #transform: object,
+        traj_names: str,
+        normalize: bool = True,
+        predefined_index: list = None,
+        goals_per_obs: int = 1,
+    ):
+        super().__init__(data_folder, data_split_folder, dataset_name, image_size, min_dist_cat, max_dist_cat,
+            len_traj_pred, traj_stride, context_size, #transform, 
+            traj_names, normalize, predefined_index, goals_per_obs)
+        
+    def _sample_goal(self, trajectory_name, curr_time, min_goal_dist, max_goal_dist):
+        """
+        Sample a goal from the future in the same trajectory.
+        Returns: (trajectory_name, goal_time, goal_is_negative)
+        """
+        goal_offset = np.random.randint(min_goal_dist, max_goal_dist + 1)
+        goal_time = curr_time + int(goal_offset)
+        return trajectory_name, goal_time, False
 
-class TrajectoryEvalDataset(LatentBaseDataset):
-    def __init__(self, latent_folder: str, traj_names: List[str]):
-        self.latent_folder = latent_folder
-        self.traj_names = traj_names
+    def __getitem__(self, i: int) -> Tuple[torch.Tensor]:
+        try:
+            f_curr, curr_time, min_goal_dist, max_goal_dist = self.index_to_data[i]
+            f_goal, goal_time, _ = self._sample_goal(f_curr, curr_time, min_goal_dist, max_goal_dist)
 
-    def __len__(self):
-        return len(self.traj_names)
+            context_times = list(range(curr_time - self.context_size + 1, curr_time + 1))           
+            context = [(f_curr, t) for t in context_times]
 
-    def __getitem__(self, index: int):
-        traj = self.traj_names[index]
-        traj_path = os.path.join(self.latent_folder, traj)
-        files = sorted(f for f in os.listdir(traj_path) if f.endswith(".pt"))
-        latents = []
-        for fname in files:
-            data = torch.load(os.path.join(traj_path, fname))
-            latents.append(data["latent"].unsqueeze(0) if isinstance(data, dict) else data.unsqueeze(0))
-        x = torch.cat(latents, dim=0)
+            #obs_image = torch.stack([self.transform(Image.open(get_data_path(self.data_folder, f, t))) for f, t in context])
+            obs_latents = torch.stack([torch.load(os.path.join(self.data_folder, self.dataset_name, f_curr, f"{t}.pt"), map_location='cpu').float()for t in context])
 
-        with open(os.path.join(traj_path, "traj_data.pkl"), "rb") as f:
-            meta = pickle.load(f)
+            #goal_image = self.transform(Image.open(get_data_path(self.data_folder, f_goal, goal_time))).unsqueeze(0)
+            goal_latent= torch.load(os.path.join(self.latent_root, self.data_folder, f_goal, f"{goal_time}.pt")).unsqueeze(0)
+            curr_traj_data = self._get_trajectory(f_curr)
 
-        return x, meta
+            actions, goal_pos = self._compute_actions(curr_traj_data, curr_time, np.array([goal_time]))
+
+            return (
+                torch.tensor([i], dtype=torch.float32), # for logging purposes
+                obs_latents,
+                goal_latent,
+                torch.as_tensor(actions, dtype=torch.float32),
+                torch.as_tensor(goal_pos, dtype=torch.float32),
+            )
+        except Exception as e:
+            print(f"Exception in {self.dataset_name}", e)
+            raise Exception(e)
