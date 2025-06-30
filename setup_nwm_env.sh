@@ -47,7 +47,12 @@ pip3 install decord diffusers tqdm timm torcheval lpips notebook dreamsim ipywid
 echo "Step 8: Install additional conda libraries" ffmpegfor video processing
 conda install -c conda-forge ffmpeg
 
-echo "✅ Environment 'nwm-env' setup complete. You can now activate it using:"
+echo "Step 9: make you bashrc eval every time to use (de)activate "
+mamba shell init --shell bash --root-prefix=~/.local/share/mamba
+
+echo "✅ Environment 'nwm-env' setup complete. You can now activate it in new bash using:"
 echo "   mamba activate nwm-env"
 eval "$(mamba shell hook --shell bash)"
 mamba activate nwm-env
+
+
