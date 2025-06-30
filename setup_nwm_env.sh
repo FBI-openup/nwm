@@ -1,20 +1,24 @@
 #!/bin/bash
 
 ################################################################################
-# 用法说明:
-# 此脚本用于创建并配置适用于 NWM 项目的 Conda 环境（Python 3.10）。
-# - 请确保系统已安装 mamba。
-# - 脚本会自动创建名为 "nwm-env" 的环境，并安装必要依赖。
+# Usage Instructions:
+# This script is intended to create and configure a Conda environment 
+# tailored for the NWM project (Python 3.10).
 #
-# 使用方式： (linux 在终端中运行以下命令 windows 使用 wsl2)
-# 1. 保存本文件为 setup_nwm_env.sh
-# 2. 给予执行权限：chmod +x setup_nwm_env.sh
-# 3. 运行脚本：./setup_nwm_env.sh
+# - Please ensure that conda and Mamba is installed on your system.
+# - The script will automatically create a Conda environment named "nwm-env" 
+#   and install all required dependencies then activate it
 #
-# ⚠️ 注意：此脚本使用 PyTorch nightly 版本，CUDA 12.6。
+# Usage (run in terminal on Linux or via WSL2 on Windows):
+# 1. Save this file as setup_nwm_env.sh
+# 2. Grant execution permission: chmod +x setup_nwm_env.sh
+# 3. Execute the script: ./setup_nwm_env.sh  or bash setup_nwm_env.sh
+#
+# ⚠️ Note: This script installs the PyTorch nightly build with CUDA 12.6 support.
 ################################################################################
 
-# 出错立即终止
+
+#Stop after any error
 set -e
 
 echo "Step 1: Create new conda environment (nwm-env, Python 3.10)"
@@ -45,3 +49,5 @@ conda install -c conda-forge ffmpeg
 
 echo "✅ Environment 'nwm-env' setup complete. You can now activate it using:"
 echo "   mamba activate nwm-env"
+eval "$(mamba shell hook --shell bash)"
+mamba activate nwm-env
