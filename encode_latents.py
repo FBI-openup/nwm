@@ -46,7 +46,7 @@ def main(input_dir: str, output_dir: str, vae_model: str):
 
             try:
                 img = Image.open(src_img).convert("RGB")
-                x   = transform(img).unsqueeze(0).to(DEVICE)  # [1,3,160,160]
+                x   = transform(img).unsqueeze(0).to(DEVICE)  # [1,3,224,224]
                 with torch.no_grad():
                     lat = vae.encode(x).latent_dist.sample() * 0.18215
                 torch.save({"latent": lat.squeeze(0).cpu()}, dst_lat)
