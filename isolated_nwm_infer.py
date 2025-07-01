@@ -3,7 +3,7 @@
 #
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-#from distributed import init_distributed
+from distributed import init_distributed
 import torch
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -19,7 +19,7 @@ from diffusers.models import AutoencoderKL
 import misc
 import distributed as dist
 from models import CDiT_models
-from latent_dataset import LatentEvalDataset
+from datasets import EvalDataset
 from PIL import Image
 
 
@@ -43,7 +43,7 @@ def get_dataset_eval(config, dataset_name, eval_type, predefined_index=True):
         predefined_index=None
 
     
-    dataset = LatentEvalDataset(
+    dataset = EvalDataset(
                 data_folder=data_config["data_folder"],
                 data_split_folder=data_config["test"],
                 dataset_name=dataset_name,
@@ -179,7 +179,7 @@ def main(args):
     datasets = {}
 
     for dataset_name in dataset_names:
-        dataset_val = get_dataset_eval(config, dataset_name, args.eval_type, predefined_index=True)
+        dataset_val = get_dataset_eval(config, dataset_name, args.eval_type, predefined_index=False)
 
         if len(dataset_val) % num_tasks != 0:
             print('Warning: Enabling distributed evaluation with an eval dataset not divisible by process number. '
@@ -233,7 +233,7 @@ if __name__ == "__main__":
     parser.add_argument("--input_fps", type=int, default=4)
     parser.add_argument("--datasets", type=str, default=None, help="dataset name")
     parser.add_argument("--num_workers", type=int, default=8, help="num workers")
-    parser.add_argument("--batch_size", type=int, default=16, help="batch size")
+    parser.add_argument("--batch_size", type=int, default=12, help="batch size")
     parser.add_argument("--eval_type", type=str, default=None, help="type of evaluation has to be either 'time' or 'rollout'")
     # Rollout Evaluation Args
     parser.add_argument("--rollout_fps_values", type=str, default='1,4', help="")
