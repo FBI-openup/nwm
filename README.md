@@ -103,3 +103,8 @@ Once everything is ready to go you can run this command:
 python train.py   --config config/nwm_cdit_b_latent_4070ti.yaml --log-every 100   --bfloat16 0   --epochs 60   --torch-compile 1
 ```
 
+## Inference
+
+```bash
+python isolated_nwm_infer.py --output_dir results/inference --exp ./config/nwm_cdit_b_latents_4070ti.yaml --ckp latest --datasets scand --eval_type  rollout --rollout_fps_value 2 --gt 0
+```
