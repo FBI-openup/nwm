@@ -214,10 +214,14 @@ class LatentTrainingDataset(LatentBaseDataset):
             context_times = list(range(curr_time - self.context_size + 1, curr_time + 1))
             context = [(f_curr, t) for t in context_times] + [(f_curr, t) for t in goal_time]
 
+            
+
             #obs_image = torch.stack([self.transform(Image.open(get_data_path(self.data_folder, f, t))) for f, t in context])
             #print(f_curr)
             obs_latents = torch.stack([self._extract_latent(torch.load(os.path.join(self.data_folder, f , f"{t}.pt"), map_location='cpu')) for f , t in context])
                 # (context + goals, latent_dim)
+            
+            #print("obs_latents", obs_latents.shape,flush=True)
 
             # Load other trajectory data
             curr_traj_data = self._get_trajectory(f_curr)
@@ -267,10 +271,13 @@ class LatentEvalDataset(LatentBaseDataset):
             context = [(f_curr, t) for t in context_times]
             pred = [(f_curr, t) for t in pred_times]
 
+            
+
             #obs_image = torch.stack([self.transform(Image.open(get_data_path(self.data_folder, f, t))) for f, t in context])
             obs_latents = torch.stack([self._extract_latent(torch.load(os.path.join(self.data_folder, f , f"{t}.pt"), map_location='cpu')) for f , t in context])
             
-            
+            #print("obs_latents", obs_latents.shape,flush=True)
+
             #pred_image = torch.stack([self.transform(Image.open(get_data_path(self.data_folder, f, t))) for f, t in pred])
             pred_latents = torch.stack([self._extract_latent(torch.load(os.path.join(self.data_folder, f , f"{t}.pt"), map_location='cpu')) for f , t in pred])
 
