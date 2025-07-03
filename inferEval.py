@@ -46,10 +46,15 @@ os.makedirs(gt_dir, exist_ok=True)
 os.makedirs(pred_dir, exist_ok=True)
 os.makedirs(eval_dir, exist_ok=True)
 
-exp_name = f"{os.path.splitext(os.path.basename(args.exp_config))[0]}_{args.ckpt}"
+exp_name = os.path.splitext(os.path.basename(args.exp_config))[0]
+pred_exp_dir = os.path.join(pred_dir, exp_name)
+if args.ckpt != '0100000':
+    pred_exp_dir += f"_{args.ckpt}"
+
 
 # For eval script
-gt_exp_dir = gt_dir + "/dummy_exp_gt"
+#gt_exp_dir = gt_dir + "/dummy_exp_gt"
+gt_exp_dir = os.path.join(gt_dir, "gt")
 pred_exp_dir = os.path.join(pred_dir, exp_name)
 
 def run(cmd_list):
