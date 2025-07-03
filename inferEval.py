@@ -25,7 +25,12 @@ from datetime import datetime
 parser = argparse.ArgumentParser(description="Run full NWM evaluation pipeline")
 
 parser.add_argument('--datasets', type=str, default="scand", help="Comma-separated dataset list (e.g., 'scand,recon,huron,tartan')")
-parser.add_argument('--exp_config', type=str, required=True, help="Path to model inference config (e.g., config/nwm_cdit_xl.yaml)")
+parser.add_argument(
+    '--exp_config',
+    type=str,
+    default="config/nwm_cdit_b_latents_4070ti.yaml",  # Path to model inference config its stored in path : args.exp_config,
+    help="Path to model inference config (default: config/nwm_cdit_b_latents_4070ti.yaml)"
+)
 parser.add_argument('--ckpt', type=str, default='0100000', help="Checkpoint ID (e.g., '0100000')")
 parser.add_argument('--input_fps', type=int, default=4, help="Input video FPS (default=4)")
 parser.add_argument('--rollout_fps', type=str, default='1,4', help="Rollout FPS values (comma-separated)")
@@ -47,26 +52,27 @@ os.makedirs(pred_dir, exist_ok=True)
 os.makedirs(eval_dir, exist_ok=True)
 
 exp_name = os.path.splitext(os.path.basename(args.exp_config))[0]
-pred_exp_dir = os.path.join(pred_dir, exp_name)
 if args.ckpt != '0100000':
-    pred_exp_dir += f"_{args.ckpt}"
-
+    exp_name += f"_{args.ckpt}"
+pred_exp_dir = os.path.join(pred_dir, exp_name)
+# pred_exp_dir = os.path.join(pred_dir, exp_name)   ❌ this is the problem that overwrite the ckpt suffix
 
 # For eval script
-#gt_exp_dir = gt_dir + "/dummy_exp_gt"
 gt_exp_dir = os.path.join(gt_dir, "gt")
 pred_exp_dir = os.path.join(pred_dir, exp_name)
 
 def run(cmd_list):
     print(f"\n>>> Running: {' '.join(cmd_list)}\n")
     subprocess.run(cmd_list, check=True)
+if not os.path.exists(args.exp_config):
+    raise FileNotFoundError(f"[ERROR] Config file does not exist: {args.exp_config}")
 
 # ======================= Step 1: GT generation ========================
 for eval_type in ["time", "rollout"]:
     cmd = [
         "python", "isolated_nwm_infer.py",
         "--output_dir", gt_dir,
-        "--exp", "dummy_exp_gt",
+        "--exp", exp_name,
         "--ckp", args.ckpt,
         "--datasets", args.datasets,
         "--eval_type", eval_type,
@@ -85,7 +91,7 @@ for eval_type in ["time", "rollout"]:
     cmd = [
         "python", "isolated_nwm_infer.py",
         "--output_dir", pred_dir,
-        "--exp", args.exp_config,
+        "--exp", exp_name,
         "--ckp", args.ckpt,
         "--datasets", args.datasets,
         "--eval_type", eval_type,
@@ -136,4 +142,7 @@ with open(eval_table_path, "a", newline="") as csvfile:
             dataset, etype, metric, sec = parts[0], parts[1], parts[2], parts[3]
             writer.writerow([datetime.now().isoformat(), exp_name, dataset, etype, metric, sec, score])
 
+print(f"\n>>> GT images saved in: {gt_dir}")
+print(f">>> Predicted images saved in: {pred_exp_dir}")
+print(f">>> Evaluation table written to: {eval_table_path}")
 print(f"\n✅ All done. Scores written to: {eval_table_path}")
