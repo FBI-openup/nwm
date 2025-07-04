@@ -96,11 +96,13 @@ To pre-process the images into ready-to-use latents you just need to execute `en
 
 ## Training setup
 
-In order to train...
+In order to train you will have to update your config file in order for the model to be well tuned. Use `nwm_cdit_xl` as a template with the corresponding args for your config.
+
+The training will be done exclusively on the latents. To achieve this we changed the `datasets.py` and made it into `latent_dataset.py` which contains some modifications. We also deactivated all the calls for the VAE in the scripts involved in `train.py` (i.e `misc.py` and thats all in fact..). We also added some memory clearing lines for the optimisation on smaller machines.
 
 Once everything is ready to go you can run this command:
 ```bash
-python train.py   --config config/nwm_cdit_b_latent_4070ti.yaml --log-every 100   --bfloat16 0   --epochs 60   --torch-compile 1
+python train.py   --config config/nwm_cdit_b_latent_4070ti.yaml --log-every 100   --bfloat16 0   --epochs 16   --torch-compile 1
 ```
 
 ## Inference
