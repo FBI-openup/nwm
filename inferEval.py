@@ -46,10 +46,15 @@ os.makedirs(gt_dir, exist_ok=True)
 os.makedirs(pred_dir, exist_ok=True)
 os.makedirs(eval_dir, exist_ok=True)
 
-exp_name = f"{os.path.splitext(os.path.basename(args.exp_config))[0]}_{args.ckpt}"
+exp_name = os.path.splitext(os.path.basename(args.exp_config))[0]
+pred_exp_dir = os.path.join(pred_dir, exp_name)
+if args.ckpt != '0100000':
+    pred_exp_dir += f"_{args.ckpt}"
+
 
 # For eval script
-gt_exp_dir = gt_dir + "/dummy_exp_gt"
+#gt_exp_dir = gt_dir + "/dummy_exp_gt"
+gt_exp_dir = os.path.join(gt_dir, "gt")
 pred_exp_dir = os.path.join(pred_dir, exp_name)
 
 def run(cmd_list):
@@ -61,7 +66,7 @@ for eval_type in ["time", "rollout"]:
     cmd = [
         "python", "isolated_nwm_infer.py",
         "--output_dir", gt_dir,
-        "--exp", "dummy_exp_gt",
+        "--exp", args.exp_config,
         "--ckp", args.ckpt,
         "--datasets", args.datasets,
         "--eval_type", eval_type,
@@ -76,9 +81,11 @@ for eval_type in ["time", "rollout"]:
     run(cmd)
 
 # ======================= Step 2: Prediction generation ========================
+
+print("Initiating Generation")
 for eval_type in ["time", "rollout"]:
     cmd = [
-        "python", "isolated_nwm_infer.py",
+        "python", "isolated_nwm_infer.py", 
         "--output_dir", pred_dir,
         "--exp", args.exp_config,
         "--ckp", args.ckpt,
@@ -131,4 +138,4 @@ with open(eval_table_path, "a", newline="") as csvfile:
             dataset, etype, metric, sec = parts[0], parts[1], parts[2], parts[3]
             writer.writerow([datetime.now().isoformat(), exp_name, dataset, etype, metric, sec, score])
 
-print(f"\n✅ All done. Scores written to: {eval_table_path}")
+print(f"\n All done. Scores written to: {eval_table_path}")

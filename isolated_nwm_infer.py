@@ -216,6 +216,7 @@ def main(args):
                         curr_rollout_output_dir = os.path.join(dataset_save_output_dir, f'rollout_{rollout_fps}fps')
                         os.makedirs(curr_rollout_output_dir, exist_ok=True)
                         generate_rollout(args, curr_rollout_output_dir, rollout_fps, idxs, model_lst, obs_image, gt_image, delta, num_cond, device)
+                        #print("saved in ", curr_time_output_dir )
                 elif args.eval_type == 'time':
                     secs = np.array([2**i for i in range(0, args.num_sec_eval)])
                     curr_time_output_dir = os.path.join(dataset_save_output_dir, 'time')

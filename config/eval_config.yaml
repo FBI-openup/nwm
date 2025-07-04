@@ -16,4 +16,4 @@ eval_datasets:
   scand:
     data_folder: data/scand
     test: data_splits/scand/test
-    goals_per_obs: 4
+    goals_per_obs: 1
