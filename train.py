@@ -340,14 +340,13 @@ def main(args):
                     #latents = tokenizer.encode(x).latent_dist.sample()
                     #torch.cuda.empty_cache()                    
                     #x = latents.mul_(0.18215).unflatten(0, (B, T))  # reshape back to (B, T, ...)
-                B, T = x.shape[:2]
-                x = x.to(device, non_blocking=True)
-
                     #del latents
                     #torch.cuda.empty_cache()
-# ===================================================================
-
-
+# ===================================================================                
+                
+                
+                B, T = x.shape[:2]
+                x = x.to(device, non_blocking=True)
                 
                 num_goals = T - num_cond
                 x_start = x[:, num_cond:].flatten(0, 1)
@@ -360,7 +359,7 @@ def main(args):
                 
                 #print(torch.cuda.memory_summary(device=None, abbreviated=True))
 
-                print("Itération")
+                #print("Itération")
 
                 loss_dict = diffusion.training_losses(model, x_start, t, model_kwargs)
                 loss = loss_dict["loss"].mean()

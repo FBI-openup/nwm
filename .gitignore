@@ -5,6 +5,7 @@ latent-encoding/train/wandb/*
 latent-encoding/train/gnm_dataset/*
 latent-encoding/*_test.yaml
 
+eval_table
 results
 diffusion/__pycache__
 logs
