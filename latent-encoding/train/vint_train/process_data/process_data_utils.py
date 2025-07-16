@@ -7,6 +7,7 @@ import cv2
 from typing import Any, Tuple, List, Dict
 import torchvision.transforms.functional as TF
 
+
 IMAGE_SIZE = (320, 240)
 IMAGE_ASPECT_RATIO = 4 / 3
 
@@ -44,6 +45,40 @@ def process_locobot_img(msg) -> Image:
         msg.height, msg.width, -1)
     pil_image = Image.fromarray(img)
     return pil_image
+
+def process_navware_img(msg) -> Image:
+    """
+    Convert HSRB img to PIL
+    """
+    if hasattr(msg, "encoding"):                     
+        img_np = np.frombuffer(msg.data, dtype=np.uint8
+                               ).reshape(msg.height, msg.width, -1)
+
+        if msg.encoding.lower().startswith("bgr"):  # if BGR we go RGB
+            img_np = cv2.cvtColor(img_np, cv2.COLOR_BGR2RGB)
+
+        if msg.encoding.lower().startswith("rgba"):
+            img_np = img_np[:, :, :3]
+
+    else:                                             
+        img_np = cv2.imdecode(np.frombuffer(msg.data, dtype=np.uint8),
+                              cv2.IMREAD_COLOR)
+        img_np = cv2.cvtColor(img_np, cv2.COLOR_BGR2RGB)
+
+    # -------- 2. centre-crop 4:3 --------
+    h, w, _ = img_np.shape
+    target_w = int(h * IMAGE_ASPECT_RATIO)
+    if w > target_w:
+        margin = (w - target_w) // 2
+        img_np = img_np[:, margin:margin + target_w, :]
+
+    # -------- 3. resize + cast uint8 --------
+    img_np = cv2.resize(img_np, IMAGE_SIZE)
+    img_np = img_np.astype(np.uint8)
+
+    # -------- 4. numpy -> PIL --------
+    return Image.fromarray(img_np)
+
 
 
 def process_scand_img(msg) -> Image:
@@ -104,6 +139,37 @@ def nav_to_xy_yaw(odom_msg, ang_offset: float) -> Tuple[List[float], float]:
         + ang_offset
     )
     return [position.x, position.y], yaw
+
+def quat_to_yaw(qx, qy, qz, qw):
+    """Renvoie le yaw (rad) d’un quaternion XYZ + W."""
+    siny_cosp = 2.0 * (qw*qz + qx*qy)
+    cosy_cosp = 1.0 - 2.0 * (qy*qy + qz*qz)
+    return float(np.arctan2(siny_cosp, cosy_cosp))
+
+def tf_to_xy_yaw(tf_msg, ang_offset: float = 0.0,
+                 parent_frames=("odom", "map"),
+                 child_frames=("base_link", "base_footprint")) -> Tuple[np.ndarray, float]:
+    """
+    Extrait (x, y) et yaw depuis un tf2_msgs/TFMessage.
+    On prend la première transformée qui relie `parent_frames` ➜ `child_frames`.
+    """
+    for t in tf_msg.transforms:
+        if (t.header.frame_id in parent_frames
+                and t.child_frame_id in child_frames):
+            # position
+            x = t.transform.translation.x
+            y = t.transform.translation.y
+
+            # orientation ➜ quaternion
+            q = t.transform.rotation
+            yaw = quat_to_yaw(q.x, q.y, q.z, q.w)
+
+            # add offset if needed
+            yaw += ang_offset
+            return np.array([x, y], dtype=np.float32), yaw
+
+    # if nothing found returns NaN
+    return np.array([np.nan, np.nan], dtype=np.float32), np.nan
 
 
 ############ Add custom odometry processing functions here ############

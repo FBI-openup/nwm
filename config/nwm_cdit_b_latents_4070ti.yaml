@@ -26,3 +26,15 @@ datasets:
     test: data_splits/scand/test
     traj_names: traj_names.txt
     goals_per_obs: 1
+  tartan_drive:
+    latent_folder: latents/tartan_drive
+    train: data_splits/tartan_drive/train
+    test: data_splits/tartan_drive/test
+    traj_names: traj_names.txt
+    goals_per_obs: 1
+  sacson:
+    latent_folder: latents/sacson
+    train: data_splits/sacson/train
+    test: data_splits/sacson/test
+    traj_names: traj_names.txt
+    goals_per_obs: 1

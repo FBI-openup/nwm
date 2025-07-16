@@ -27,3 +27,9 @@ sacson:
   odom_process_func: "nav_to_xy_yaw"
 
 # add your own datasets below:
+navware:
+  odomtopics: "/tf"                       
+  imtopics: "/hsrb/head_rgbd_sensor/rgb/image_rect_color"  
+  ang_offset: 0.0                        
+  img_process_func: "process_navware_img"   
+  odom_process_func: "tf_to_xy_yaw"
