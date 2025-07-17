@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=my_l40s_training
+#SBATCH --job-name=nwm_training_job
 #SBATCH --partition=ENSTA-l40s
 #SBATCH --gpus=1
 #SBATCH --time=04:00:00
@@ -7,20 +7,23 @@
 #SBATCH --output=l40s_job_%j.out
 #SBATCH --error=l40s_job_%j.err
 
-echo "任务开始，运行在节点: $(hostname)"
-echo "当前时间: $(date)"
+echo "✅ Job started on node: $(hostname) / 任务运行节点：$(hostname)"
+echo "🕒 Start time: $(date) / 开始时间：$(date)"
 
-# 正确加载 conda 环境
-source ~/miniconda3/etc/profile.d/conda.sh || { echo "❌ 无法加载 conda.sh"; exit 1; }
-conda activate nwm-env || { echo "❌ conda activate 失败"; exit 1; }
+#load conda environment
+source ~/miniconda3/etc/profile.d/conda.sh || { echo "❌ Failed to load conda.sh / 无法加载 conda.sh"; exit 1; }
+conda activate nwm-env || { echo "❌ Failed to activate conda env / 激活 Conda 环境失败"; exit 1; }
 
+# switch to the directory containing the code
+cd ${HOME}/boyuan/nwm || { echo "❌ Directory not found: ${HOME}/boyuan/nwm / 找不到代码目录"; exit 1; }
 
-# 进入代码目录（使用绝对路径）
-cd ${HOME}/boyuan/nwm || { echo "❌ 路径不存在"; exit 1; }
+echo "🚀 Starting model training... / 开始模型训练..."
 
+# replace with your training command
+python train.py --config config/nwm_cdit_l.yaml
 
-# 测试命令
-echo "即将运行 Python hello world"
-python -c "print('Hello from Python inside SLURM')"
+#example command for training with specific parameters
+# python train.py --config config/nwm_cdit_xl.yaml --device cuda --batch_size 8 --num_workers 4
 
-echo "任务结束"
+echo "✅ Training finished. / 训练完成。"
+echo "🕓 End time: $(date) / 结束时间：$(date)"
