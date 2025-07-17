@@ -1,0 +1,62 @@
+run_name: nwm_cdit_l_latents_L40S
+
+# output
+results_dir: logs_L40S_latents
+
+# training switches
+train: True
+eval_decode: false
+
+# hardware & precision
+#accelerator: gpu         
+#gpus: 2                  
+#strategy: ddp            
+#precision: 16            
+
+# batch & data loading
+batch_size: 16           
+num_workers: 16          
+
+# model & optimization
+model: CDiT-L/2          
+lr: 8e-5                 # LR ajusté au batch_size (≈ 6e-5 × (32/12) ≃ 1.6e-4 ; arrondi à 2e-4)
+normalize: True
+grad_clip_val: 10.0
+
+context_size: 4
+
+# (optionnel) scheduler / warm-up
+# warmup_steps: 1000
+# lr_scheduler:
+#   name: linear
+#   total_steps: 200000
+
+distance:
+  min_dist_cat: -64
+  max_dist_cat: 64
+
+datasets:
+  nwm:
+    latent_folder: latents/nwm
+    train: data_splits/nwm/train
+    test: data_splits/nwm/test
+    traj_names: traj_names.txt
+    goals_per_obs: 2
+  scand:
+    latent_folder: latents/scand
+    train: data_splits/scand/train
+    test: data_splits/scand/test
+    traj_names: traj_names.txt
+    goals_per_obs: 2
+  tartan_drive:
+    latent_folder: latents/tartan_drive
+    train: data_splits/tartan_drive/train
+    test: data_splits/tartan_drive/test
+    traj_names: traj_names.txt
+    goals_per_obs: 2
+  sacson:
+    latent_folder: latents/sacson
+    train: data_splits/sacson/train
+    test: data_splits/sacson/test
+    traj_names: traj_names.txt
+    goals_per_obs: 2
