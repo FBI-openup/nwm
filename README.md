@@ -105,6 +105,8 @@ Once everything is ready to go you can run this command:
 python train.py   --config config/nwm_cdit_b_latent_4070ti.yaml --log-every 100   --bfloat16 0   --epochs 16   --torch-compile 1
 ```
 
+The number of epochs depends on the number of steps you want (here we were aiming for 100K steps).
+
 ## Inference
 
 ```bash

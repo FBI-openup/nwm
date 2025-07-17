@@ -317,7 +317,7 @@ def CDiT_XL_2(**kwargs):
     return CDiT(depth=28, hidden_size=1152, patch_size=2, num_heads=16, **kwargs)
 
 def CDiT_L_2(**kwargs):
-    return CDiT(depth=16, hidden_size=1024, patch_size=2, num_heads=16, **kwargs) #depth is 24 initially
+    return CDiT(depth=24, hidden_size=1024, patch_size=2, num_heads=16, **kwargs) #depth is 24 initially
 
 def CDiT_B_2(**kwargs):
     return CDiT(depth=12, hidden_size=768, patch_size=2, num_heads=12, **kwargs)
