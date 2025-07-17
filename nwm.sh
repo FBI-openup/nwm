@@ -2,7 +2,7 @@
 #SBATCH --job-name=nwm_training_job
 #SBATCH --partition=ENSTA-l40s
 #SBATCH --gpus=1
-#SBATCH --time=04:00:00
+#SBATCH --time=23:50:00
 #SBATCH --nodelist=ensta-l40s01.r2.enst.fr
 #SBATCH --output=l40s_job_%j.out
 #SBATCH --error=l40s_job_%j.err
