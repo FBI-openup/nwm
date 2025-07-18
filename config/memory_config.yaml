@@ -1,0 +1,25 @@
+# WorldMem Memory Configuration for NWM
+
+memory:
+  enabled: true
+  capacity: 1000
+  short_term_horizon: 10
+  long_term_threshold: 50
+
+worldmem:
+  n_frames: 16
+  frame_stack: 1
+  memory_condition_length: 5
+  pose_cond_dim: 6
+  use_plucker: true
+  relative_embedding: true
+  state_embed_only_on_qk: true
+  use_memory_attention: true
+  add_timestamp_embedding: true
+  ref_mode: 'sequential'
+
+performance:
+  batch_size: 4
+  max_memory_frames: 100
+  memory_attention_heads: 8
+  memory_dim: 512
