@@ -20,7 +20,7 @@ cd ${HOME}/boyuan/nwm || { echo "❌ Directory not found: ${HOME}/boyuan/nwm / �
 echo "🚀 Starting model training... / 开始模型训练..."
 
 # replace with your training command
-python train.py --config config/nwm_cdit_l_latents_L40S.yaml
+python train.py --config config/hybrid_nwm_cdit_l_latents_L40S.yaml
 
 #example command for training with specific parameters
 # python train.py --config config/nwm_cdit_xl.yaml --device cuda --batch_size 8 --num_workers 4

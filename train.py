@@ -34,6 +34,7 @@ from diffusers.models import AutoencoderKL
 
 from distributed import init_distributed
 from models import CDiT_models
+from hybrid_models import HybridCDiT_models  # Import hybrid models
 from diffusion import create_diffusion
 from datasets import TrainingDataset
 from misc import transform
@@ -128,7 +129,22 @@ def main(args):
 
     assert config['image_size'] % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     num_cond = config['context_size']
-    model = CDiT_models[config['model']](context_size=num_cond, input_size=latent_size, in_channels=4).to(device)
+    
+    # Choose between original CDiT and Hybrid CDiT
+    use_hybrid = config.get('use_hybrid_model', False)
+    if use_hybrid:
+        logger.info("Using Hybrid CDiT model with memory capabilities")
+        model = HybridCDiT_models[config['model'].replace('CDiT', 'HybridCDiT')](
+            context_size=num_cond, 
+            input_size=latent_size, 
+            in_channels=4,
+            memory_enabled=config.get('memory_enabled', True),
+            memory_buffer_size=config.get('memory_buffer_size', 50),
+            memory_layers=config.get('memory_layers', None)
+        ).to(device)
+    else:
+        logger.info("Using standard CDiT model")
+        model = CDiT_models[config['model']](context_size=num_cond, input_size=latent_size, in_channels=4).to(device)
     
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
     requires_grad(ema, False)
@@ -288,7 +304,18 @@ def main(args):
                 rel_t = rel_t.flatten(0, 1)
                 
                 t = torch.randint(0, diffusion.num_timesteps, (x_start.shape[0],), device=device)
+                
+                # Prepare model kwargs
                 model_kwargs = dict(y=y, x_cond=x_cond, rel_t=rel_t)
+                
+                # For hybrid models, add pose information if available
+                if use_hybrid and hasattr(model.module, 'memory_enabled') and model.module.memory_enabled:
+                    # Generate synthetic pose data for training (in real scenario, this would come from dataset)
+                    # Format: [x, y, z, pitch, yaw] 
+                    current_pose = torch.randn(B * num_goals, 5, device=device) * 10  # Synthetic poses
+                    model_kwargs['current_pose'] = current_pose
+                    model_kwargs['update_memory'] = True
+                
                 loss_dict = diffusion.training_losses(model, x_start, t, model_kwargs)
                 loss = loss_dict["loss"].mean()
 
