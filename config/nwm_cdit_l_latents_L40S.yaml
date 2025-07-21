@@ -22,9 +22,9 @@ model: CDiT-L/2
 lr: 8e-5                 # LR ajusté au batch_size (≈ 6e-5 × (32/12) ≃ 1.6e-4 ; arrondi à 2e-4)
 normalize: True
 grad_clip_val: 10.0
-
+image_size: 224 
 context_size: 4
-
+len_traj_pred: 32
 # (optionnel) scheduler / warm-up
 # warmup_steps: 1000
 # lr_scheduler:

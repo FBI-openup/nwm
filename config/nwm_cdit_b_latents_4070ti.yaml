@@ -17,7 +17,7 @@ distance:
   max_dist_cat: 64
 
 len_traj_pred: 32
-image_size: 224            # requis uniquement pour compatibilité
+image_size: 224 
 
 datasets:
   scand:

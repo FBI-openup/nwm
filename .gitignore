@@ -15,6 +15,7 @@ data_splits/**/dataset*.pkl
 data/
 Miniconda3-latest-linux-x86_64.sh
 logs_4070ti/
+logs_L40S_latents/
 actions.txt
 latents
 logs_4070ti_latents
