@@ -31,6 +31,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, ConcatDataset
 from torch.utils.data.distributed import DistributedSampler
 from diffusers.models import AutoencoderKL
+from diffusers.optimization import get_scheduler
 
 from distributed import init_distributed
 from models import CDiT_models
@@ -137,7 +138,7 @@ def main(args):
         logger.info(f"Experiment directory created at {experiment_dir}")
     else:
         logger = create_logger(None)
-
+    
     # Create model:
 
     #tokenizer = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-ema").to(device)
@@ -152,12 +153,25 @@ def main(args):
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
     requires_grad(ema, False)
     
-    # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
+
+    warmup_steps = config.get('warmup_steps', 0)
+    sched_cfg = config.get('lr_scheduler', None)
+    total_steps = sched_cfg['total_steps'] if sched_cfg else None
+
+    # Setup optimizer (we use AdamW with default betas=(0.9, 0.999) and a constant learning rate of 1e-4):
     lr = float(config.get('lr', 1e-4))
-
-    #opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0)
-
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0, foreach=False)
+
+    # Setup learning rate scheduler:
+    if sched_cfg is not None:
+        scheduler = get_scheduler(
+            name=sched_cfg['name'],
+            optimizer=opt,
+            num_warmup_steps=warmup_steps,
+            num_training_steps=total_steps
+        )
+    else:
+        scheduler = None
 
 
     bfloat_enable = bool(hasattr(args, 'bfloat16') and args.bfloat16)
@@ -368,6 +382,8 @@ def main(args):
                 opt.zero_grad()
                 loss.backward()
                 opt.step()
+                if scheduler is not None:
+                    scheduler.step()
             else:
                 scaler.scale(loss).backward()
                 if config.get('grad_clip_val', 0) > 0:
@@ -375,6 +391,9 @@ def main(args):
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config['grad_clip_val'])
                 scaler.step(opt)
                 scaler.update()
+                if scheduler is not None:
+                    scheduler.step()
+                    
 # ==================== PATCH: free memory after optimizer step ====================
                 torch.cuda.empty_cache()
                 torch.cuda.ipc_collect()

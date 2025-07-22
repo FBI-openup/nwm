@@ -12,6 +12,13 @@ grad_clip_val: 10.0
 context_size: 3
 eval_decode: false
 
+# (optionnel) scheduler / warm-up
+warmup_steps: 1000
+
+lr_scheduler:
+  name: linear
+  total_steps: 100000
+
 distance:
   min_dist_cat: -64
   max_dist_cat: 64
