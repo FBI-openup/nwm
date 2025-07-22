@@ -38,10 +38,10 @@ distance:
   max_dist_cat: 64
 
 datasets:
-  nwm:
-    latent_folder: latents/nwm
-    train: data_splits/nwm/train
-    test: data_splits/nwm/test
+  recon:
+    latent_folder: latents/recon
+    train: data_splits/recon/train
+    test: data_splits/recon/test
     traj_names: traj_names.txt
     goals_per_obs: 2
   scand:
