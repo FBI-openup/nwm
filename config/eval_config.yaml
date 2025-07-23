@@ -17,3 +17,15 @@ eval_datasets:
     data_folder: data/scand
     test: data_splits/scand/test
     goals_per_obs: 1
+  recon:
+    data_folder: data/recon
+    test: data_splits/recon/test
+    goals_per_obs: 1
+  sacson:
+    data_folder: data/sacson
+    test: data_splits/sacson/test
+    goals_per_obs: 1
+  tartan_drive:
+    data_folder: data/tartan_drive
+    test: data_splits/tartan_drive/test
+    goals_per_obs: 1
