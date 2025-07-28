@@ -310,9 +310,17 @@ def main(args):
                 
                 # For hybrid models, add pose information if available
                 if use_hybrid and hasattr(model.module, 'memory_enabled') and model.module.memory_enabled:
-                    # Generate synthetic pose data for training (in real scenario, this would come from dataset)
-                    # Format: [x, y, z, pitch, yaw] 
-                    current_pose = torch.randn(B * num_goals, 5, device=device) * 10  # Synthetic poses
+                    # Efficient batch pose extraction from actions
+                    # y shape: [B * num_goals, 3] where 3 = [delta_x, delta_y, delta_yaw]
+                    
+                    # Create 4D pose: [x, y, z=0, yaw] (no pitch since dataset doesn't have it)
+                    current_pose = torch.zeros(y.shape[0], 4, device=device)
+                    current_pose[:, 0] = y[:, 0]  # delta_x -> x
+                    current_pose[:, 1] = y[:, 1]  # delta_y -> y  
+                    current_pose[:, 2] = 0.0      # z = 0 (ground level)
+                    current_pose[:, 3] = y[:, 2]  # delta_yaw -> yaw
+                    # No pitch dimension since dataset doesn't contain it
+                    
                     model_kwargs['current_pose'] = current_pose
                     model_kwargs['update_memory'] = True
                 

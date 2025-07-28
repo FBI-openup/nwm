@@ -41,7 +41,8 @@ class MemoryBuffer:
     
     def get_relevant_frames(self, current_pose: torch.Tensor, k: int = 8) -> Optional[torch.Tensor]:
         """
-        Retrieve k most spatially relevant frames based on pose similarity
+        Retrieve k most spatially relevant frames based on enhanced pose similarity
+        Optimized for computational efficiency
         """
         if len(self.frames) == 0:
             return None
@@ -49,21 +50,34 @@ class MemoryBuffer:
         if len(self.frames) <= k:
             return torch.stack(self.frames).to(current_pose.device)
         
-        # Compute spatial similarity (simplified - could use FOV overlap)
-        similarities = []
-        current_pos = current_pose[:3].cpu()  # x, y, z
+        # Vectorized similarity computation for efficiency
+        current_pos = current_pose[:3].cpu()  # x, y, z (if available)
+        memory_poses = torch.stack(self.poses)  # [N, pose_dim]
         
-        for pose in self.poses:
-            pose_pos = pose[:3]
-            # Euclidean distance in 3D space
-            dist = torch.norm(current_pos - pose_pos)
-            similarity = torch.exp(-dist / 10.0)  # Adjustable scale factor
-            similarities.append(similarity)
+        # 1. Vectorized spatial distance computation
+        if current_pose.shape[0] >= 2:  # At least x, y available
+            pose_dims = min(3, memory_poses.shape[1])  # Use up to 3 dimensions
+            spatial_dists = torch.norm(memory_poses[:, :pose_dims] - current_pos[:pose_dims], dim=1)
+            spatial_sims = torch.exp(-spatial_dists / 10.0)
+        else:
+            spatial_sims = torch.ones(len(self.poses))
         
-        # Select top-k most similar frames
-        similarities = torch.tensor(similarities)
+        # 2. Vectorized orientation similarity (if yaw available)
+        # Note: Dataset only has yaw (no pitch), so yaw is at index 3 for 4D pose [x,y,z,yaw]
+        if current_pose.shape[0] > 3 and memory_poses.shape[1] > 3:
+            current_yaw = current_pose[3].cpu()
+            yaw_diffs = torch.abs(current_yaw - memory_poses[:, 3])
+            # Handle angle wrap-around efficiently
+            yaw_diffs = torch.minimum(yaw_diffs, 2 * np.pi - yaw_diffs)
+            angle_sims = torch.exp(-yaw_diffs / (np.pi / 4))
+            
+            # Combined similarity with weights
+            similarities = 0.7 * spatial_sims + 0.3 * angle_sims
+        else:
+            similarities = spatial_sims
+        
+        # Select top-k (single operation, no loop)
         top_k_indices = torch.topk(similarities, min(k, len(similarities))).indices
-        
         relevant_frames = [self.frames[i] for i in top_k_indices]
         return torch.stack(relevant_frames).to(current_pose.device)
 
@@ -381,7 +395,7 @@ class HybridCDiT(nn.Module):
             y: Action conditions [N, 3]  
             x_cond: Context frames [N, context_size, C, H, W]
             rel_t: Relative time [N]
-            current_pose: Current camera pose [N, 5] (x,y,z,pitch,yaw)
+            current_pose: Current camera pose [N, 4] (x,y,z,yaw) - no pitch in dataset
             update_memory: Whether to update memory buffer
         """
         # Embed inputs (same as CDiT)
@@ -462,7 +476,7 @@ if __name__ == "__main__":
     y = torch.randn(batch_size, 3)
     x_cond = torch.randn(batch_size, 3, 4, 32, 32)  # context_size=3 for L model
     rel_t = torch.randn(batch_size)
-    current_pose = torch.randn(batch_size, 5)
+    current_pose = torch.randn(batch_size, 4)  # [x, y, z, yaw] - no pitch
     
     with torch.no_grad():
         output = model(x, t, y, x_cond, rel_t, current_pose)

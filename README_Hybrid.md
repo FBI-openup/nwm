@@ -59,17 +59,30 @@ def forward(self, x, c, x_cond, memory_frames=None, memory_activation_score=0.0)
 
 ### 3. 记忆检索策略
 
-**空间相似性匹配**:
+**增强的空间相似性匹配**:
 ```python
 def get_relevant_frames(self, current_pose, k=8):
-    # 基于3D空间距离计算相似性
+    # 结合空间距离和视角方向的相似性计算
     similarities = []
     current_pos = current_pose[:3]  # x, y, z
+    current_yaw = current_pose[3] if len(current_pose) > 3 else None  # yaw
     
     for pose in self.poses:
-        dist = torch.norm(current_pos - pose[:3])
-        similarity = torch.exp(-dist / 10.0)  # 可调节的尺度因子
-        similarities.append(similarity)
+        # 1. 空间距离相似性
+        spatial_dist = torch.norm(current_pos - pose[:3])
+        spatial_sim = torch.exp(-spatial_dist / 10.0)
+        
+        # 2. 视角方向相似性 (考虑角度环绕)
+        if current_yaw is not None and len(pose) > 3:
+            yaw_diff = torch.abs(current_yaw - pose[3])
+            yaw_diff = torch.min(yaw_diff, 2*π - yaw_diff)  # 处理角度环绕
+            angle_sim = torch.exp(-yaw_diff / (π/4))  # 45度为尺度
+        else:
+            angle_sim = 1.0
+            
+        # 3. 综合相似性 (加权组合)
+        combined_sim = 0.7 * spatial_sim + 0.3 * angle_sim
+        similarities.append(combined_sim)
     
     # 选择top-k最相关帧
     top_k_indices = torch.topk(similarities, k).indices
@@ -161,13 +174,19 @@ else:
     model = CDiT_models[config['model']](context_size=num_cond, input_size=latent_size, in_channels=4).to(device)
 ```
 
-**修改3: 训练循环中添加姿态信息**
+**修改3: 训练循环中添加真实姿态信息**
 ```python
 # 第295-315行左右，在训练循环中添加
 # For hybrid models, add pose information if available
 if use_hybrid and hasattr(model.module, 'memory_enabled') and model.module.memory_enabled:
-    # Generate synthetic pose data for training
-    current_pose = torch.randn(B * num_goals, 5, device=device) * 10  # Synthetic poses
+    # Extract real pose data from actions (y contains [delta_x, delta_y, delta_yaw])
+    # Create 4D pose: [x, y, z=0, yaw] (dataset only has yaw, no pitch)
+    current_pose = torch.zeros(y.shape[0], 4, device=device)
+    current_pose[:, 0] = y[:, 0]  # delta_x -> x
+    current_pose[:, 1] = y[:, 1]  # delta_y -> y  
+    current_pose[:, 2] = 0.0      # z = 0 (ground level)
+    current_pose[:, 3] = y[:, 2]  # delta_yaw -> yaw
+    
     model_kwargs['current_pose'] = current_pose
     model_kwargs['update_memory'] = True
 ```
@@ -305,13 +324,14 @@ rm config/wm_debug_bs_32.yaml                   # 如果不需要debug配置
 
 ### Q: 训练时记忆是如何工作的？
 **A**: 训练时的记忆管理:
-1. **合成姿态**: 由于真实数据集可能没有准确姿态，使用`torch.randn`生成合成姿态
+1. **真实姿态提取**: 从action数据中提取真实的pose信息 `[delta_x, delta_y, delta_yaw]`，并转换为近似的绝对姿态
 2. **记忆更新**: 每个前向传播后，将当前帧加入记忆缓冲区
-3. **批处理**: 每个batch独立维护记忆，不同样本间不共享记忆
+3. **批处理记忆**: 每个batch独立维护记忆，不同样本间不共享记忆
+4. **视角相似性**: 结合空间距离和视角方向进行记忆检索
 
 ### Q: 推理时需要什么额外信息？
 **A**: 推理时需要提供:
-- **相机姿态**: `[x, y, z, pitch, yaw]` 用于空间相似性计算
+- **相机姿态**: `[x, y, z, yaw]` 用于空间相似性计算（数据集只包含yaw，没有pitch）
 - **动作幅度**: 从action条件中自动计算
 - 如果没有准确姿态，模型会自动降级为标准CDiT行为
 
