@@ -34,9 +34,7 @@ from torch.utils.data.distributed import DistributedSampler
 from distributed import init_distributed
 from models import CDiT_models
 from diffusion import create_diffusion
-from datasets import TrainingDataset
 from latent_dataset import LatentTrainingDataset
-from misc import transform
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -122,19 +120,7 @@ def main(args):
     else:
         logger = create_logger(None)
 
-    # Determine if we're using latent-based datasets
-    use_latent_datasets = any(
-        "latent_folder" in data_config 
-        for data_config in config['datasets'].values()
-    )
-    
     # Create model:
-    tokenizer = None
-    if not use_latent_datasets:
-        # Only load VAE for image-based datasets
-        from diffusers.models import AutoencoderKL
-        tokenizer = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-ema").to(device)
-    
     latent_size = config['image_size'] // 8
     assert config['image_size'] % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     
@@ -220,41 +206,25 @@ def main(args):
                     else:
                         len_traj_pred=config["len_traj_pred"]
 
-                    # Choose between latent-based or image-based dataset
-                    if "latent_folder" in data_config:
-                        # Use latent-based dataset for faster training
-                        dataset = LatentTrainingDataset(
-                            data_folder=data_config["latent_folder"],
-                            data_split_folder=data_config[data_split_type],
-                            dataset_name=dataset_name,
-                            image_size=config["image_size"],
-                            min_dist_cat=min_dist_cat,
-                            max_dist_cat=max_dist_cat,
-                            len_traj_pred=len_traj_pred,
-                            context_size=config["context_size"],
-                            normalize=config["normalize"],
-                            goals_per_obs=goals_per_obs,
-                            traj_names=data_config["traj_names"],
-                            predefined_index=None,
-                            traj_stride=1,
-                        )
-                    else:
-                        # Use original image-based dataset
-                        dataset = TrainingDataset(
-                            data_folder=data_config["data_folder"],
-                            data_split_folder=data_config[data_split_type],
-                            dataset_name=dataset_name,
-                            image_size=config["image_size"],
-                            min_dist_cat=min_dist_cat,
-                            max_dist_cat=max_dist_cat,
-                            len_traj_pred=len_traj_pred,
-                            context_size=config["context_size"],
-                            normalize=config["normalize"],
-                            goals_per_obs=goals_per_obs,
-                            transform=transform,
-                            predefined_index=None,
-                            traj_stride=1,
-                        )
+                    # Use latent-based dataset (images should be pre-encoded using encode_latents.py)
+                    if "latent_folder" not in data_config:
+                        raise ValueError(f"Dataset {dataset_name} missing 'latent_folder'. Please run encode_latents.py first or use image-based config.")
+                    
+                    dataset = LatentTrainingDataset(
+                        data_folder=data_config["latent_folder"],
+                        data_split_folder=data_config[data_split_type],
+                        dataset_name=dataset_name,
+                        image_size=config["image_size"],
+                        min_dist_cat=min_dist_cat,
+                        max_dist_cat=max_dist_cat,
+                        len_traj_pred=len_traj_pred,
+                        context_size=config["context_size"],
+                        normalize=config["normalize"],
+                        goals_per_obs=goals_per_obs,
+                        traj_names=data_config["traj_names"],
+                        predefined_index=None,
+                        traj_stride=1,
+                    )
                     if data_split_type == "train":
                         train_dataset.append(dataset)
                     else:
@@ -305,16 +275,8 @@ def main(args):
             rel_t = rel_t.to(device, non_blocking=True)
             
             with torch.amp.autocast('cuda', enabled=bfloat_enable, dtype=torch.bfloat16):
-                with torch.no_grad():
-                    B, T = x.shape[:2]
-                    
-                    # For image-based datasets: encode to latents
-                    # For latent-based datasets: x is already latents
-                    if tokenizer is not None:
-                        # Map input images to latent space + normalize latents:
-                        x = x.flatten(0,1)
-                        x = tokenizer.encode(x).latent_dist.sample().mul_(0.18215)
-                        x = x.unflatten(0, (B, T))
+                # x is already latents (either from LatentTrainingDataset or pre-encoded)
+                B, T = x.shape[:2]
                 
                 num_goals = T - num_cond
                 x_start = x[:, num_cond:].flatten(0, 1)
@@ -384,7 +346,7 @@ def main(args):
             if train_steps % args.eval_every == 0 and train_steps > 0:
                 eval_start_time = time()
                 save_dir = os.path.join(experiment_dir, str(train_steps))
-                sim_score = evaluate(ema, tokenizer, diffusion, test_dataset, rank, config["batch_size"], config["num_workers"], latent_size, device, save_dir, args.global_seed, bfloat_enable, num_cond)
+                sim_score = evaluate(ema, diffusion, test_dataset, rank, config["batch_size"], config["num_workers"], latent_size, device, save_dir, args.global_seed, bfloat_enable, num_cond)
                 dist.barrier()
                 eval_end_time = time()
                 eval_time = eval_end_time - eval_start_time
@@ -398,7 +360,7 @@ def main(args):
 
 
 @torch.no_grad
-def evaluate(model, vae, diffusion, test_dataloaders, rank, batch_size, num_workers, latent_size, device, save_dir, seed, bfloat_enable, num_cond):
+def evaluate(model, diffusion, test_dataloaders, rank, batch_size, num_workers, latent_size, device, save_dir, seed, bfloat_enable, num_cond):
     sampler = DistributedSampler(
         test_dataloaders,
         num_replicas=dist.get_world_size(),
@@ -415,8 +377,7 @@ def evaluate(model, vae, diffusion, test_dataloaders, rank, batch_size, num_work
         pin_memory=True,
         drop_last=True
     )
-    from dreamsim import dreamsim
-    eval_model, _ = dreamsim(pretrained=True)
+    # For latent-based training, use simple MSE evaluation
     score = torch.tensor(0.).to(device)
     n_samples = torch.tensor(0).to(device)
 
@@ -428,43 +389,27 @@ def evaluate(model, vae, diffusion, test_dataloaders, rank, batch_size, num_work
         with torch.amp.autocast('cuda', enabled=True, dtype=torch.bfloat16):
             B, T = x.shape[:2]
             num_goals = T - num_cond
-            samples = model_forward_wrapper((model, diffusion, vae), x, y, num_timesteps=None, latent_size=latent_size, device=device, num_cond=num_cond, num_goals=num_goals, rel_t=rel_t)
+            samples = model_forward_wrapper((model, diffusion, None), x, y, num_timesteps=None, latent_size=latent_size, device=device, num_cond=num_cond, num_goals=num_goals, rel_t=rel_t)
             
-            # For latent-based evaluation, convert latents to pixels for visualization
-            if vae is not None:
-                # Image-based dataset: x is already pixels
-                x_start_pixels = x[:, num_cond:].flatten(0, 1)
-                x_cond_pixels = x[:, :num_cond].unsqueeze(1).expand(B, num_goals, num_cond, x.shape[2], x.shape[3], x.shape[4]).flatten(0, 1)
-                samples = samples * 0.5 + 0.5
-                x_start_pixels = x_start_pixels * 0.5 + 0.5
-                x_cond_pixels = x_cond_pixels * 0.5 + 0.5
-            else:
-                # Latent-based dataset: decode latents to pixels for evaluation
-                x_start_latents = x[:, num_cond:].flatten(0, 1)
-                x_cond_latents = x[:, :num_cond].unsqueeze(1).expand(B, num_goals, num_cond, x.shape[2], x.shape[3], x.shape[4]).flatten(0, 1)
-                
-                # Convert latents to pixels for evaluation (need VAE decoder)
-                # For now, skip pixel-based evaluation for latent datasets
-                print("Warning: Pixel-based evaluation skipped for latent datasets")
-                score += torch.tensor(0.5).to(device) * len(x_start_latents)  # Default score
-                n_samples += len(x_start_latents)
-                continue
-                
-            res = eval_model(x_start_pixels, samples)
-            score += res.sum()
-            n_samples += len(res)
+            # For latent-based training, we skip pixel-level evaluation
+            # and use a simple latent-space metric instead
+            x_start_latents = x[:, num_cond:].flatten(0, 1)
+            
+            # Simple MSE loss in latent space as evaluation metric
+            mse_loss = torch.nn.functional.mse_loss(samples, x_start_latents, reduction='none').mean(dim=[1,2,3])
+            score += mse_loss.sum()
+            n_samples += len(mse_loss)
         break
     
-    if rank == 0 and vae is not None:  # Only visualize for image-based datasets
+    # Save latent tensors for debugging (optional)
+    if rank == 0:
         os.makedirs(save_dir, exist_ok=True)
-        for i in range(min(samples.shape[0], 10)):
-            _, ax = plt.subplots(1,3,dpi=256)
-            ax[0].imshow((x_cond_pixels[i, -1].permute(1,2,0).cpu().numpy()*255).astype('uint8'))
-            ax[1].imshow((x_start_pixels[i].permute(1,2,0).cpu().numpy()*255).astype('uint8'))
-            ax[2].imshow((samples[i].permute(1,2,0).cpu().float().numpy()*255).astype('uint8'))
-            plt.savefig(f'{save_dir}/{i}.png')
-            plt.close()
-            plt.close()
+        # Save a few latent samples for debugging
+        torch.save({
+            'samples': samples[:5].cpu(),
+            'ground_truth': x_start_latents[:5].cpu(),
+            'mse_loss': mse_loss[:5].cpu()
+        }, f'{save_dir}/latent_eval_samples.pt')
 
     dist.all_reduce(score)
     dist.all_reduce(n_samples)
