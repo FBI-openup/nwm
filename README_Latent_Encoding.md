@@ -11,8 +11,10 @@ This directory contains tools and scripts for preprocessing images into latent r
 ./latent-encoding/encode_all_datasets.sh
 
 # Or encode individual datasets
+python encode_latents.py -i data/recon -o latents/recon
 python encode_latents.py -i data/scand -o latents/scand
 python encode_latents.py -i data/tartan -o latents/tartan_drive
+python encode_latents.py -i data/sacson -o latents/sacson
 ```
 
 ### 2. Train with Latents
