@@ -1,54 +1,88 @@
-# L40S GPU训练配置 - 混合内存模型
-# 训练时不使用buffer，推理时启用内存机制
+# L40S GPU training configuration - Hybrid memory model
+# Training without buffer, memory mechanism enabled during inference
+run_name: hybrid_l40s_inference_memory
 
-# 模型配置
-model: "CDiT-L/2"
+# output
+results_dir: logs_L40S_hybrid_latents
+
+# training switches
+train: True
+eval_decode: false
+
+# hardware & precision
+#accelerator: gpu         
+#gpus: 2                  
+#strategy: ddp            
+#precision: 16            
+
+# batch & data loading
+batch_size: 16           # Updated to match L40S latent config
+num_workers: 16          # Updated to match L40S latent config
+
+# hybrid model configuration
+model: CDiT-L/2          
 use_hybrid_model: true
-memory_enabled: true  # 推理时启用
+memory_enabled: true     # Enable during inference
 memory_buffer_size: 50
-memory_layers: [0, 6, 12, 18]  # 在这些层激活内存
+memory_layers: [0, 6, 12, 18]  # Activate memory at these layers
 
-# 训练参数
-batch_size: 8  # L40S适合的batch size
-lr: 1e-4
-grad_clip_val: 1.0
-epochs: 100
+# model & optimization
+lr: 2e-5                 # Updated to match L40S latent config
+normalize: True
+grad_clip_val: 10.0      # Updated to match L40S latent config
+image_size: 224          # Updated to match L40S latent config
+context_size: 4          # Updated to match L40S latent config
+len_traj_pred: 32        # Updated to match L40S latent config
 
-# 数据配置
-image_size: 256
-context_size: 3
-len_traj_pred: 8
-normalize: true
+# training schedule
+warmup_steps: 1000
 
-# 距离分类
+lr_scheduler:
+  name: linear
+  total_steps: 100000
+
+# distance classification
 distance:
-  min_dist_cat: 1
-  max_dist_cat: 20
+  min_dist_cat: -64      # Updated to match L40S latent config
+  max_dist_cat: 64       # Updated to match L40S latent config
 
-# 数据集配置
+# dataset configuration - updated to use latent folders
 datasets:
   recon:
-    data_folder: "/path/to/recon"
-    train: "train.txt"
-    test: "test.txt"
-    goals_per_obs: 8
-    len_traj_pred: 8
+    latent_folder: latents/recon
+    train: data_splits/recon/train
+    test: data_splits/recon/test
+    traj_names: traj_names.txt
+    goals_per_obs: 2
+  scand:
+    latent_folder: latents/scand
+    train: data_splits/scand/train
+    test: data_splits/scand/test
+    traj_names: traj_names.txt
+    goals_per_obs: 2
+  tartan_drive:
+    latent_folder: latents/tartan_drive
+    train: data_splits/tartan_drive/train
+    test: data_splits/tartan_drive/test
+    traj_names: traj_names.txt
+    goals_per_obs: 2
+  sacson:
+    latent_folder: latents/sacson
+    train: data_splits/sacson/train
+    test: data_splits/sacson/test
+    traj_names: traj_names.txt
+    goals_per_obs: 2
 
-# 结果保存
-results_dir: "/path/to/results"
-run_name: "hybrid_l40s_inference_memory"
-
-# L40S优化设置
-num_workers: 4  # 适合L40S的worker数量
+# L40S optimization settings
 pin_memory: true
 persistent_workers: true
 
-# 内存权重配置（仅推理时使用）
-spatial_weight: 0.8  # 空间相似性权重
-action_weight: 0.2   # 行为相似性权重
+# memory weight configuration (used only during inference)
+spatial_weight: 0.8  # Spatial similarity weight
+action_weight: 0.2   # Action similarity weight
 
-# 行为分类阈值
+# behavior classification thresholds
 behavior_thresholds:
-  straight_threshold: 0.1    # 6度以下算直行
-  minor_adjust_threshold: 0.3  # 17度以下算微调
-  turn_threshold: 1.0        # 57度以下算转弯
+  straight_threshold: 0.1    # Below 6 degrees considered straight
+  minor_adjust_threshold: 0.3  # Below 17 degrees considered minor adjustment
+  turn_threshold: 1.0        # Below 57 degrees considered turn
