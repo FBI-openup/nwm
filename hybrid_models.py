@@ -18,31 +18,42 @@ from models import TimestepEmbedder, ActionEmbedder, modulate, FinalLayer
 class MemoryBuffer:
     """
     Efficient memory buffer for storing and retrieving historical frames
-    with spatial similarity-based selection.
+    with action-based behavioral similarity selection.
     """
     def __init__(self, max_size: int = 100, similarity_threshold: float = 0.7):
         self.max_size = max_size
         self.similarity_threshold = similarity_threshold
         self.frames = []
         self.poses = []
+        self.actions = []  # Store actions for behavioral similarity
         self.frame_indices = []
         
-    def add_frame(self, frame_latent: torch.Tensor, pose: torch.Tensor, frame_idx: int):
-        """Add a new frame to memory buffer"""
+    def add_frame(self, frame_latent: torch.Tensor, pose: torch.Tensor, action: torch.Tensor = None, frame_idx: int = 0):
+        """Add a new frame to memory buffer with associated action - 保存到CPU以减少GPU内存使用"""
+        # 推理时才使用buffer，所以保存到CPU是合理的，使用时会转移到GPU
         self.frames.append(frame_latent.detach().cpu())
         self.poses.append(pose.detach().cpu())
+        if action is not None:
+            self.actions.append(action.detach().cpu())
+        else:
+            # Placeholder if no action provided
+            if len(self.actions) > 0:
+                self.actions.append(torch.zeros_like(self.actions[0]))
+            else:
+                self.actions.append(torch.zeros(3))  # Default [delta_x, delta_y, delta_yaw]
         self.frame_indices.append(frame_idx)
         
         # Maintain buffer size
         if len(self.frames) > self.max_size:
             self.frames.pop(0)
             self.poses.pop(0)
+            self.actions.pop(0)
             self.frame_indices.pop(0)
     
-    def get_relevant_frames(self, current_pose: torch.Tensor, k: int = 8) -> Optional[torch.Tensor]:
+    def get_relevant_frames(self, current_pose: torch.Tensor, target_action: torch.Tensor = None, k: int = 8) -> Optional[torch.Tensor]:
         """
-        Retrieve k most spatially relevant frames based on enhanced pose similarity
-        Optimized for computational efficiency
+        Retrieve k most relevant frames based on spatial proximity and action intent
+        Focus on behavioral relevance rather than pose similarity
         """
         if len(self.frames) == 0:
             return None
@@ -50,36 +61,163 @@ class MemoryBuffer:
         if len(self.frames) <= k:
             return torch.stack(self.frames).to(current_pose.device)
         
-        # Vectorized similarity computation for efficiency
-        current_pos = current_pose[:3].cpu()  # x, y, z (if available)
-        memory_poses = torch.stack(self.poses)  # [N, pose_dim]
+        # Vectorized similarity computation for efficiency - 纯GPU操作
+        current_pos = current_pose[:3]  # 保持GPU，移除.cpu()
+        memory_poses = torch.stack(self.poses).to(current_pose.device)  # 确保在同一设备
         
-        # 1. Vectorized spatial distance computation
+        # 1. Spatial distance computation (primary factor)
         if current_pose.shape[0] >= 2:  # At least x, y available
             pose_dims = min(3, memory_poses.shape[1])  # Use up to 3 dimensions
             spatial_dists = torch.norm(memory_poses[:, :pose_dims] - current_pos[:pose_dims], dim=1)
             spatial_sims = torch.exp(-spatial_dists / 10.0)
         else:
-            spatial_sims = torch.ones(len(self.poses))
+            spatial_sims = torch.ones(len(self.poses), device=current_pose.device)
         
-        # 2. Vectorized orientation similarity (if yaw available)
-        # Note: Dataset only has yaw (no pitch), so yaw is at index 3 for 4D pose [x,y,z,yaw]
-        if current_pose.shape[0] > 3 and memory_poses.shape[1] > 3:
-            current_yaw = current_pose[3].cpu()
-            yaw_diffs = torch.abs(current_yaw - memory_poses[:, 3])
-            # Handle angle wrap-around efficiently
-            yaw_diffs = torch.minimum(yaw_diffs, 2 * np.pi - yaw_diffs)
-            angle_sims = torch.exp(-yaw_diffs / (np.pi / 4))
+        # 2. Action-based similarity (if target action provided)
+        # Focus on BEHAVIORAL CATEGORIES rather than exact action matching
+        if target_action is not None and hasattr(self, 'actions') and len(self.actions) > 0:
+            target_action_gpu = target_action.to(current_pose.device)  # 保持GPU
+            memory_actions = torch.stack(self.actions).to(current_pose.device)  # 确保在GPU
             
-            # Combined similarity with weights
-            similarities = 0.7 * spatial_sims + 0.3 * angle_sims
+            # Behavioral similarity based on movement categories
+            action_sims = self._compute_behavioral_similarity(target_action_gpu, memory_actions)
+            
+            # Combined similarity: prioritize spatial proximity, consider action patterns
+            similarities = 0.8 * spatial_sims + 0.2 * action_sims
         else:
+            # Fall back to spatial similarity only
             similarities = spatial_sims
         
         # Select top-k (single operation, no loop)
         top_k_indices = torch.topk(similarities, min(k, len(similarities))).indices
         relevant_frames = [self.frames[i] for i in top_k_indices]
         return torch.stack(relevant_frames).to(current_pose.device)
+    
+    def _compute_behavioral_similarity(self, target_action: torch.Tensor, memory_actions: torch.Tensor) -> torch.Tensor:
+        """
+        计算基于行为语义的相似性，而不是简单的数值距离
+        考虑转弯的方向性和运动模式的分类
+        
+        Args:
+            target_action: [delta_x, delta_y, delta_yaw] 目标动作
+            memory_actions: [N, 3] 历史动作集合
+            
+        Returns:
+            torch.Tensor: [N] 行为相似性分数
+        """
+        # 提取运动组件
+        target_linear = target_action[:2]  # [delta_x, delta_y]
+        target_yaw = target_action[2]      # delta_yaw
+        
+        memory_linear = memory_actions[:, :2]  # [N, 2]
+        memory_yaw = memory_actions[:, 2]      # [N]
+        
+        # 1. 线性运动相似性 (位移向量)
+        target_linear_norm = torch.norm(target_linear)
+        memory_linear_norm = torch.norm(memory_linear, dim=1)
+        
+        # 运动幅度相似性
+        magnitude_sims = torch.exp(-torch.abs(target_linear_norm - memory_linear_norm) / 2.0)
+        
+        # 运动方向相似性 (仅对非零运动计算)
+        direction_sims = torch.ones_like(magnitude_sims)
+        if target_linear_norm > 0.1:  # 有明显线性运动
+            target_direction = target_linear / target_linear_norm
+            valid_memory = memory_linear_norm > 0.1
+            if valid_memory.any():
+                memory_directions = memory_linear[valid_memory] / memory_linear_norm[valid_memory].unsqueeze(1)
+                dot_products = torch.mm(memory_directions, target_direction.unsqueeze(1)).squeeze()
+                direction_sims[valid_memory] = (dot_products + 1) / 2  # 从[-1,1]映射到[0,1]
+        
+        # 2. 旋转行为分类相似性
+        yaw_sims = self._compute_rotation_similarity(target_yaw, memory_yaw)
+        
+        # 3. 综合行为相似性
+        # 权重：线性运动(40%) + 方向(30%) + 旋转行为(30%)
+        behavioral_sims = 0.4 * magnitude_sims + 0.3 * direction_sims + 0.3 * yaw_sims
+        
+        return behavioral_sims
+    
+    def _compute_rotation_similarity(self, target_yaw: torch.Tensor, memory_yaw: torch.Tensor) -> torch.Tensor:
+        """
+        基于旋转行为语义的相似性计算 - 转弯和直行有不同评分标准
+        确保转弯动作的相似性分数明显低于直行，避免混淆
+        
+        行为分类：
+        - 直行: |yaw| < 0.1 rad (~6°) -> 高相似性基线 (0.9-1.0)
+        - 微调: 0.1 <= |yaw| < 0.3 rad (~6°-17°) -> 中等相似性 (0.6-0.8)
+        - 转弯: 0.3 <= |yaw| < 1.0 rad (~17°-57°) -> 低相似性 (0.3-0.6)
+        - 大转: |yaw| >= 1.0 rad (~57°+) -> 最低相似性 (0.1-0.4)
+        """
+        device = target_yaw.device
+        
+        # 旋转方向分类
+        target_direction = torch.sign(target_yaw)  # -1, 0, 1
+        memory_direction = torch.sign(memory_yaw)   # [N]
+        
+        # 旋转幅度分类
+        def categorize_rotation(yaw_abs):
+            """将旋转幅度分类"""
+            return torch.where(yaw_abs < 0.1, 0,      # 直行
+                   torch.where(yaw_abs < 0.3, 1,      # 微调  
+                   torch.where(yaw_abs < 1.0, 2, 3))) # 转弯 / 大转
+        
+        target_abs = torch.abs(target_yaw)
+        memory_abs = torch.abs(memory_yaw)
+        
+        target_category = categorize_rotation(target_abs)
+        memory_categories = categorize_rotation(memory_abs)
+        
+        # 计算相似性 - 不同行为类别有不同的评分基准
+        direction_match = (target_direction == memory_direction).float()
+        category_match = (target_category == memory_categories).float()
+        
+        # 初始化相似性分数
+        yaw_sims = torch.zeros_like(memory_yaw, device=device)
+        
+        # 分类别处理，确保转弯和直行有明显的评分差异
+        
+        # 1. 直行类别（目标为直行）
+        if target_category == 0:
+            # 直行时，优先选择其他直行动作
+            straight_mask = (memory_categories == 0)
+            yaw_sims[straight_mask] = 1.0  # 直行间完全匹配
+            
+            # 对微调给予较低分数
+            minor_adjust_mask = (memory_categories == 1)
+            yaw_sims[minor_adjust_mask] = 0.3
+            
+            # 对转弯给予很低分数
+            turn_mask = (memory_categories >= 2)
+            yaw_sims[turn_mask] = 0.1
+            
+        # 2. 转弯类别（目标为转弯）
+        else:
+            # 完美匹配：同方向同类别
+            perfect_match = (direction_match == 1) & (category_match == 1)
+            # 根据类别设定不同的基础分数，转弯类别的基础分数较低
+            base_scores = torch.tensor([0.9, 0.7, 0.5, 0.3], device=device)  # 直行, 微调, 转弯, 大转
+            yaw_sims[perfect_match] = base_scores[target_category]
+            
+            # 同方向不同类别：给予中等分数
+            direction_only = (direction_match == 1) & (category_match == 0)
+            if direction_only.any():
+                # 基于角度差异的衰减
+                yaw_diff = torch.abs(target_abs - memory_abs[direction_only])
+                angle_similarity = torch.exp(-yaw_diff / 0.5)
+                # 应用类别惩罚
+                category_penalty = base_scores[target_category] * 0.7
+                yaw_sims[direction_only] = angle_similarity * category_penalty
+            
+            # 方向相反：极低分数
+            opposite_direction = (direction_match == 0) & (target_category > 0) & (memory_categories > 0)
+            yaw_sims[opposite_direction] = 0.05
+            
+            # 转弯时遇到直行：低分数
+            turning_vs_straight = (target_category > 0) & (memory_categories == 0)
+            yaw_sims[turning_vs_straight] = 0.1
+        
+        return yaw_sims
 
 
 class SelectiveMemoryAttention(nn.Module):
@@ -346,10 +484,10 @@ class HybridCDiT(nn.Module):
         nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)
     
-    def update_memory(self, frame_latent: torch.Tensor, pose: torch.Tensor):
-        """Update memory buffer with new frame"""
+    def update_memory(self, frame_latent: torch.Tensor, pose: torch.Tensor, action: torch.Tensor = None):
+        """Update memory buffer with new frame and associated action"""
         if self.memory_buffer is not None:
-            self.memory_buffer.add_frame(frame_latent, pose, self.frame_counter)
+            self.memory_buffer.add_frame(frame_latent, pose, action, self.frame_counter)
             self.frame_counter += 1
     
     def compute_memory_activation_score(self, current_pose: torch.Tensor, 
@@ -408,15 +546,23 @@ class HybridCDiT(nn.Module):
         time_emb = self.time_embedder(rel_t[..., None])
         c = t_emb + time_emb + y_emb
         
-        # Memory preparation
+        # Memory preparation - 只在推理时使用，训练时跳过
         memory_frames = None
         memory_activation_score = 0.0
         
-        if self.memory_enabled and current_pose is not None:
-            # Get relevant memory frames
-            memory_frames = self.memory_buffer.get_relevant_frames(current_pose[0], k=8)
+        # 只在推理阶段（非训练模式）使用内存buffer
+        if self.memory_enabled and current_pose is not None and not self.training:
+            # Get relevant memory frames based on intended action (behavioral similarity)
+            target_action = y[0] if y is not None else None  # Current target action
+            memory_frames = self.memory_buffer.get_relevant_frames(
+                current_pose[0], target_action=target_action, k=8
+            )
             if memory_frames is not None:
-                memory_frames = memory_frames.unsqueeze(0).expand(x.shape[0], -1, -1, -1)
+                # memory_frames shape: [k, C, H, W], 需要扩展为 [batch_size, k, C, H, W]
+                if memory_frames.dim() == 4:  # [k, C, H, W]
+                    memory_frames = memory_frames.unsqueeze(0).expand(x.shape[0], -1, -1, -1, -1)
+                elif memory_frames.dim() == 3:  # [k, H, W] 单通道情况
+                    memory_frames = memory_frames.unsqueeze(0).unsqueeze(2).expand(x.shape[0], -1, x.shape[1], -1, -1)
             
             # Compute memory activation score
             action_magnitude = torch.norm(y[0]).item()
@@ -433,9 +579,10 @@ class HybridCDiT(nn.Module):
         x = self.final_layer(x, c)
         x = self.unpatchify(x)
         
-        # Update memory if requested
-        if update_memory and self.memory_enabled and current_pose is not None:
-            self.update_memory(x.detach(), current_pose[0])
+        # Update memory 只在推理时更新，训练时跳过
+        if update_memory and self.memory_enabled and current_pose is not None and not self.training:
+            current_action = y[0] if y is not None else None  # Store the action that led to this frame
+            self.update_memory(x.detach(), current_pose[0], current_action)
         
         return x
 

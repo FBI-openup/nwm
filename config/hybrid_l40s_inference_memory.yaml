@@ -1,0 +1,54 @@
+# L40S GPU训练配置 - 混合内存模型
+# 训练时不使用buffer，推理时启用内存机制
+
+# 模型配置
+model: "CDiT-L/2"
+use_hybrid_model: true
+memory_enabled: true  # 推理时启用
+memory_buffer_size: 50
+memory_layers: [0, 6, 12, 18]  # 在这些层激活内存
+
+# 训练参数
+batch_size: 8  # L40S适合的batch size
+lr: 1e-4
+grad_clip_val: 1.0
+epochs: 100
+
+# 数据配置
+image_size: 256
+context_size: 3
+len_traj_pred: 8
+normalize: true
+
+# 距离分类
+distance:
+  min_dist_cat: 1
+  max_dist_cat: 20
+
+# 数据集配置
+datasets:
+  recon:
+    data_folder: "/path/to/recon"
+    train: "train.txt"
+    test: "test.txt"
+    goals_per_obs: 8
+    len_traj_pred: 8
+
+# 结果保存
+results_dir: "/path/to/results"
+run_name: "hybrid_l40s_inference_memory"
+
+# L40S优化设置
+num_workers: 4  # 适合L40S的worker数量
+pin_memory: true
+persistent_workers: true
+
+# 内存权重配置（仅推理时使用）
+spatial_weight: 0.8  # 空间相似性权重
+action_weight: 0.2   # 行为相似性权重
+
+# 行为分类阈值
+behavior_thresholds:
+  straight_threshold: 0.1    # 6度以下算直行
+  minor_adjust_threshold: 0.3  # 17度以下算微调
+  turn_threshold: 1.0        # 57度以下算转弯
