@@ -36,6 +36,7 @@ from distributed import init_distributed
 from models import CDiT_models
 from diffusion import create_diffusion
 from datasets import TrainingDataset
+from latent_dataset import LatentTrainingDataset
 from misc import transform
 
 #################################################################################
@@ -209,21 +210,41 @@ def main(args):
                     else:
                         len_traj_pred=config["len_traj_pred"]
 
-                    dataset = TrainingDataset(
-                        data_folder=data_config["data_folder"],
-                        data_split_folder=data_config[data_split_type],
-                        dataset_name=dataset_name,
-                        image_size=config["image_size"],
-                        min_dist_cat=min_dist_cat,
-                        max_dist_cat=max_dist_cat,
-                        len_traj_pred=len_traj_pred,
-                        context_size=config["context_size"],
-                        normalize=config["normalize"],
-                        goals_per_obs=goals_per_obs,
-                        transform=transform,
-                        predefined_index=None,
-                        traj_stride=1,
-                    )
+                    # Choose between latent-based or image-based dataset
+                    if "latent_folder" in data_config:
+                        # Use latent-based dataset for faster training
+                        dataset = LatentTrainingDataset(
+                            data_folder=data_config["latent_folder"],
+                            data_split_folder=data_config[data_split_type],
+                            dataset_name=dataset_name,
+                            image_size=config["image_size"],
+                            min_dist_cat=min_dist_cat,
+                            max_dist_cat=max_dist_cat,
+                            len_traj_pred=len_traj_pred,
+                            context_size=config["context_size"],
+                            normalize=config["normalize"],
+                            goals_per_obs=goals_per_obs,
+                            traj_names=data_config["traj_names"],
+                            predefined_index=None,
+                            traj_stride=1,
+                        )
+                    else:
+                        # Use original image-based dataset
+                        dataset = TrainingDataset(
+                            data_folder=data_config["data_folder"],
+                            data_split_folder=data_config[data_split_type],
+                            dataset_name=dataset_name,
+                            image_size=config["image_size"],
+                            min_dist_cat=min_dist_cat,
+                            max_dist_cat=max_dist_cat,
+                            len_traj_pred=len_traj_pred,
+                            context_size=config["context_size"],
+                            normalize=config["normalize"],
+                            goals_per_obs=goals_per_obs,
+                            transform=transform,
+                            predefined_index=None,
+                            traj_stride=1,
+                        )
                     if data_split_type == "train":
                         train_dataset.append(dataset)
                     else:
