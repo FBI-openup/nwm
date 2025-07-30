@@ -29,18 +29,18 @@ class MemoryBuffer:
         self.frame_indices = []
         
     def add_frame(self, frame_latent: torch.Tensor, pose: torch.Tensor, action: torch.Tensor = None, frame_idx: int = 0):
-        """Add a new frame to memory buffer with associated action - 保存到CPU以减少GPU内存使用"""
-        # 推理时才使用buffer，所以保存到CPU是合理的，使用时会转移到GPU
-        self.frames.append(frame_latent.detach().cpu())
-        self.poses.append(pose.detach().cpu())
+        """Add a new frame to memory buffer with associated action - keep on GPU for cluster training"""
+        # On L40s GPU cluster, all data must remain on GPU as CPU storage is not available
+        self.frames.append(frame_latent.detach())
+        self.poses.append(pose.detach())
         if action is not None:
-            self.actions.append(action.detach().cpu())
+            self.actions.append(action.detach())
         else:
             # Placeholder if no action provided
             if len(self.actions) > 0:
                 self.actions.append(torch.zeros_like(self.actions[0]))
             else:
-                self.actions.append(torch.zeros(3))  # Default [delta_x, delta_y, delta_yaw]
+                self.actions.append(torch.zeros(3, device=frame_latent.device))  # Default [delta_x, delta_y, delta_yaw] on same device
         self.frame_indices.append(frame_idx)
         
         # Maintain buffer size
@@ -61,9 +61,9 @@ class MemoryBuffer:
         if len(self.frames) <= k:
             return torch.stack(self.frames).to(current_pose.device)
         
-        # Vectorized similarity computation for efficiency - 纯GPU操作
-        current_pos = current_pose[:3]  # 保持GPU，移除.cpu()
-        memory_poses = torch.stack(self.poses).to(current_pose.device)  # 确保在同一设备
+        # Vectorized similarity computation for efficiency - pure GPU operations for cluster training
+        current_pos = current_pose[:3]  # Keep on GPU for cluster compatibility
+        memory_poses = torch.stack(self.poses).to(current_pose.device)  # Ensure same device
         
         # 1. Spatial distance computation (primary factor)
         if current_pose.shape[0] >= 2:  # At least x, y available
@@ -76,8 +76,8 @@ class MemoryBuffer:
         # 2. Action-based similarity (if target action provided)
         # Focus on BEHAVIORAL CATEGORIES rather than exact action matching
         if target_action is not None and hasattr(self, 'actions') and len(self.actions) > 0:
-            target_action_gpu = target_action.to(current_pose.device)  # 保持GPU
-            memory_actions = torch.stack(self.actions).to(current_pose.device)  # 确保在GPU
+            target_action_gpu = target_action.to(current_pose.device)  # Keep on GPU for cluster training
+            memory_actions = torch.stack(self.actions).to(current_pose.device)  # Ensure on GPU
             
             # Behavioral similarity based on movement categories
             action_sims = self._compute_behavioral_similarity(target_action_gpu, memory_actions)
@@ -95,72 +95,72 @@ class MemoryBuffer:
     
     def _compute_behavioral_similarity(self, target_action: torch.Tensor, memory_actions: torch.Tensor) -> torch.Tensor:
         """
-        计算基于行为语义的相似性，而不是简单的数值距离
-        考虑转弯的方向性和运动模式的分类
+        Compute behavioral similarity based on action semantics rather than simple numerical distance
+        Considers turning directionality and movement pattern classification for cluster GPU training
         
         Args:
-            target_action: [delta_x, delta_y, delta_yaw] 目标动作
-            memory_actions: [N, 3] 历史动作集合
+            target_action: [delta_x, delta_y, delta_yaw] target action
+            memory_actions: [N, 3] historical action set
             
         Returns:
-            torch.Tensor: [N] 行为相似性分数
+            torch.Tensor: [N] behavioral similarity scores
         """
-        # 提取运动组件
+        # Extract movement components
         target_linear = target_action[:2]  # [delta_x, delta_y]
         target_yaw = target_action[2]      # delta_yaw
         
         memory_linear = memory_actions[:, :2]  # [N, 2]
         memory_yaw = memory_actions[:, 2]      # [N]
         
-        # 1. 线性运动相似性 (位移向量)
+        # 1. Linear movement similarity (displacement vector)
         target_linear_norm = torch.norm(target_linear)
         memory_linear_norm = torch.norm(memory_linear, dim=1)
         
-        # 运动幅度相似性
+        # Movement magnitude similarity
         magnitude_sims = torch.exp(-torch.abs(target_linear_norm - memory_linear_norm) / 2.0)
         
-        # 运动方向相似性 (仅对非零运动计算)
+        # Movement direction similarity (only compute for non-zero movements)
         direction_sims = torch.ones_like(magnitude_sims)
-        if target_linear_norm > 0.1:  # 有明显线性运动
+        if target_linear_norm > 0.1:  # Significant linear movement
             target_direction = target_linear / target_linear_norm
             valid_memory = memory_linear_norm > 0.1
             if valid_memory.any():
                 memory_directions = memory_linear[valid_memory] / memory_linear_norm[valid_memory].unsqueeze(1)
                 dot_products = torch.mm(memory_directions, target_direction.unsqueeze(1)).squeeze()
-                direction_sims[valid_memory] = (dot_products + 1) / 2  # 从[-1,1]映射到[0,1]
+                direction_sims[valid_memory] = (dot_products + 1) / 2  # Map from [-1,1] to [0,1]
         
-        # 2. 旋转行为分类相似性
+        # 2. Rotation behavior classification similarity
         yaw_sims = self._compute_rotation_similarity(target_yaw, memory_yaw)
         
-        # 3. 综合行为相似性
-        # 权重：线性运动(40%) + 方向(30%) + 旋转行为(30%)
+        # 3. Combined behavioral similarity
+        # Weights: linear movement(40%) + direction(30%) + rotation behavior(30%)
         behavioral_sims = 0.4 * magnitude_sims + 0.3 * direction_sims + 0.3 * yaw_sims
         
         return behavioral_sims
     
     def _compute_rotation_similarity(self, target_yaw: torch.Tensor, memory_yaw: torch.Tensor) -> torch.Tensor:
         """
-        基于旋转行为语义的相似性计算 - 转弯和直行有不同评分标准
-        确保转弯动作的相似性分数明显低于直行，避免混淆
+        Rotation behavior semantic similarity computation - turning and straight movement have different scoring criteria
+        Ensure turning actions have significantly lower similarity scores than straight movement to avoid confusion
         
-        行为分类：
-        - 直行: |yaw| < 0.1 rad (~6°) -> 高相似性基线 (0.9-1.0)
-        - 微调: 0.1 <= |yaw| < 0.3 rad (~6°-17°) -> 中等相似性 (0.6-0.8)
-        - 转弯: 0.3 <= |yaw| < 1.0 rad (~17°-57°) -> 低相似性 (0.3-0.6)
-        - 大转: |yaw| >= 1.0 rad (~57°+) -> 最低相似性 (0.1-0.4)
+        Behavior classification:
+        - Straight: |yaw| < 0.1 rad (~6°) -> high similarity baseline (0.9-1.0)
+        - Minor adjustment: 0.1 <= |yaw| < 0.3 rad (~6°-17°) -> medium similarity (0.6-0.8)
+        - Turn: 0.3 <= |yaw| < 1.0 rad (~17°-57°) -> low similarity (0.3-0.6)
+        - Sharp turn: |yaw| >= 1.0 rad (~57°+) -> lowest similarity (0.1-0.4)
         """
         device = target_yaw.device
         
-        # 旋转方向分类
+        # Rotation direction classification
         target_direction = torch.sign(target_yaw)  # -1, 0, 1
         memory_direction = torch.sign(memory_yaw)   # [N]
         
-        # 旋转幅度分类
+        # Rotation magnitude classification
         def categorize_rotation(yaw_abs):
-            """将旋转幅度分类"""
-            return torch.where(yaw_abs < 0.1, 0,      # 直行
-                   torch.where(yaw_abs < 0.3, 1,      # 微调  
-                   torch.where(yaw_abs < 1.0, 2, 3))) # 转弯 / 大转
+            """Classify rotation magnitude"""
+            return torch.where(yaw_abs < 0.1, 0,      # straight
+                   torch.where(yaw_abs < 0.3, 1,      # minor adjustment
+                   torch.where(yaw_abs < 1.0, 2, 3))) # turn / sharp turn
         
         target_abs = torch.abs(target_yaw)
         memory_abs = torch.abs(memory_yaw)
@@ -168,52 +168,52 @@ class MemoryBuffer:
         target_category = categorize_rotation(target_abs)
         memory_categories = categorize_rotation(memory_abs)
         
-        # 计算相似性 - 不同行为类别有不同的评分基准
+        # Compute similarity - different behavior categories have different scoring baselines
         direction_match = (target_direction == memory_direction).float()
         category_match = (target_category == memory_categories).float()
         
-        # 初始化相似性分数
+        # Initialize similarity scores
         yaw_sims = torch.zeros_like(memory_yaw, device=device)
         
-        # 分类别处理，确保转弯和直行有明显的评分差异
+        # Category-wise processing, ensure clear scoring differences between turning and straight movement
         
-        # 1. 直行类别（目标为直行）
+        # 1. Straight category (target is straight movement)
         if target_category == 0:
-            # 直行时，优先选择其他直行动作
+            # When going straight, prioritize other straight actions
             straight_mask = (memory_categories == 0)
-            yaw_sims[straight_mask] = 1.0  # 直行间完全匹配
+            yaw_sims[straight_mask] = 1.0  # Perfect match for straight movements
             
-            # 对微调给予较低分数
+            # Give lower scores to minor adjustments
             minor_adjust_mask = (memory_categories == 1)
             yaw_sims[minor_adjust_mask] = 0.3
             
-            # 对转弯给予很低分数
+            # Give very low scores to turns
             turn_mask = (memory_categories >= 2)
             yaw_sims[turn_mask] = 0.1
             
-        # 2. 转弯类别（目标为转弯）
+        # 2. Turning category (target is turning)
         else:
-            # 完美匹配：同方向同类别
+            # Perfect match: same direction same category
             perfect_match = (direction_match == 1) & (category_match == 1)
-            # 根据类别设定不同的基础分数，转弯类别的基础分数较低
-            base_scores = torch.tensor([0.9, 0.7, 0.5, 0.3], device=device)  # 直行, 微调, 转弯, 大转
+            # Set different base scores based on category, turning categories have lower base scores
+            base_scores = torch.tensor([0.9, 0.7, 0.5, 0.3], device=device)  # straight, minor, turn, sharp
             yaw_sims[perfect_match] = base_scores[target_category]
             
-            # 同方向不同类别：给予中等分数
+            # Same direction different category: give medium scores
             direction_only = (direction_match == 1) & (category_match == 0)
             if direction_only.any():
-                # 基于角度差异的衰减
+                # Decay based on angle difference
                 yaw_diff = torch.abs(target_abs - memory_abs[direction_only])
                 angle_similarity = torch.exp(-yaw_diff / 0.5)
-                # 应用类别惩罚
+                # Apply category penalty
                 category_penalty = base_scores[target_category] * 0.7
                 yaw_sims[direction_only] = angle_similarity * category_penalty
             
-            # 方向相反：极低分数
+            # Opposite direction: extremely low scores
             opposite_direction = (direction_match == 0) & (target_category > 0) & (memory_categories > 0)
             yaw_sims[opposite_direction] = 0.05
             
-            # 转弯时遇到直行：低分数
+            # Turning vs straight: low scores
             turning_vs_straight = (target_category > 0) & (memory_categories == 0)
             yaw_sims[turning_vs_straight] = 0.1
         
@@ -546,11 +546,11 @@ class HybridCDiT(nn.Module):
         time_emb = self.time_embedder(rel_t[..., None])
         c = t_emb + time_emb + y_emb
         
-        # Memory preparation - 只在推理时使用，训练时跳过
+        # Memory preparation - only use during inference, skip during training
         memory_frames = None
         memory_activation_score = 0.0
         
-        # 只在推理阶段（非训练模式）使用内存buffer
+        # Only use memory buffer during inference phase (not training mode) on GPU cluster
         if self.memory_enabled and current_pose is not None and not self.training:
             # Get relevant memory frames based on intended action (behavioral similarity)
             target_action = y[0] if y is not None else None  # Current target action
@@ -558,10 +558,10 @@ class HybridCDiT(nn.Module):
                 current_pose[0], target_action=target_action, k=8
             )
             if memory_frames is not None:
-                # memory_frames shape: [k, C, H, W], 需要扩展为 [batch_size, k, C, H, W]
+                # memory_frames shape: [k, C, H, W], need to expand to [batch_size, k, C, H, W]
                 if memory_frames.dim() == 4:  # [k, C, H, W]
                     memory_frames = memory_frames.unsqueeze(0).expand(x.shape[0], -1, -1, -1, -1)
-                elif memory_frames.dim() == 3:  # [k, H, W] 单通道情况
+                elif memory_frames.dim() == 3:  # [k, H, W] single channel case
                     memory_frames = memory_frames.unsqueeze(0).unsqueeze(2).expand(x.shape[0], -1, x.shape[1], -1, -1)
             
             # Compute memory activation score
@@ -579,7 +579,7 @@ class HybridCDiT(nn.Module):
         x = self.final_layer(x, c)
         x = self.unpatchify(x)
         
-        # Update memory 只在推理时更新，训练时跳过
+        # Update memory only during inference, skip during training for GPU cluster efficiency
         if update_memory and self.memory_enabled and current_pose is not None and not self.training:
             current_action = y[0] if y is not None else None  # Store the action that led to this frame
             self.update_memory(x.detach(), current_pose[0], current_action)
