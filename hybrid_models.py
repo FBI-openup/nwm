@@ -17,43 +17,207 @@ from models import TimestepEmbedder, ActionEmbedder, modulate, FinalLayer
 
 class MemoryBuffer:
     """
-    Efficient memory buffer for storing and retrieving historical frames
-    with action-based behavioral similarity selection.
+    智能记忆缓存系统，基于打分机制存储和检索关键帧
+    支持动态评分调整和多因素综合评估
     """
-    def __init__(self, max_size: int = 100, similarity_threshold: float = 0.7):
+    def __init__(self, max_size: int = 40, min_score_threshold: float = 0.3):
+        # === 可配置评分参数 (方便调参) ===
+        self.SCORING_CONFIG = {
+            # 初始分数权重
+            'turn_action_weight': 2.0,        # 转弯动作重要性
+            'sharp_turn_weight': 3.0,         # 急转弯额外加权
+            'view_clarity_weight': 1.5,       # 视野开阔度权重
+            'spatial_diversity_weight': 1.8,  # 空间分布多样性
+            'angle_diversity_weight': 1.2,    # 角度多样性
+            
+            # 动态调整参数
+            'usage_boost': 0.2,               # 每次使用的分数提升
+            'decay_rate': 0.05,               # 未使用时的衰减率
+            'max_score': 5.0,                 # 最高分数上限
+            'min_survival_score': 0.1,        # 保留的最低分数
+            
+            # 行为分类阈值 (归一化后)
+            'significant_turn_threshold': 0.25,  # 重要转弯阈值
+            'sharp_turn_threshold': 0.45,        # 急转弯阈值
+            'linear_motion_threshold': 0.2,      # 线性运动阈值
+            
+            # 空间分布参数
+            'min_spatial_distance': 3.0,         # 最小空间间距
+            'min_angle_difference': 1.0,         # 最小角度差异(弧度)
+        }
+        
         self.max_size = max_size
-        self.similarity_threshold = similarity_threshold
+        self.min_score_threshold = min_score_threshold
+        
+        # 存储结构
         self.frames = []
         self.poses = []
-        self.actions = []  # Store actions for behavioral similarity
+        self.actions = []
         self.frame_indices = []
+        self.scores = []           # 每个记忆的当前分数
+        self.usage_counts = []     # 使用次数统计
+        self.last_used = []        # 最后使用时间
         
     def add_frame(self, frame_latent: torch.Tensor, pose: torch.Tensor, action: torch.Tensor = None, frame_idx: int = 0):
-        """Add a new frame to memory buffer with associated action - keep on GPU for cluster training"""
-        # On L40s GPU cluster, all data must remain on GPU as CPU storage is not available
-        self.frames.append(frame_latent.detach())
-        self.poses.append(pose.detach())
-        if action is not None:
-            self.actions.append(action.detach())
-        else:
-            # Placeholder if no action provided
-            if len(self.actions) > 0:
-                self.actions.append(torch.zeros_like(self.actions[0]))
-            else:
-                self.actions.append(torch.zeros(3, device=frame_latent.device))  # Default [delta_x, delta_y, delta_yaw] on same device
-        self.frame_indices.append(frame_idx)
+        """智能添加帧到记忆缓存，基于综合评分决定是否存储"""
+        # 计算新帧的初始分数
+        initial_score = self.compute_frame_score(pose, action, frame_idx)
         
-        # Maintain buffer size
-        if len(self.frames) > self.max_size:
-            self.frames.pop(0)
-            self.poses.pop(0)
-            self.actions.pop(0)
-            self.frame_indices.pop(0)
+        # 如果分数过低，直接丢弃
+        if initial_score < self.min_score_threshold:
+            return False
+        
+        # 如果缓存未满，直接添加
+        if len(self.frames) < self.max_size:
+            self.frames.append(frame_latent.detach())
+            self.poses.append(pose.detach())
+            if action is not None:
+                self.actions.append(action.detach())
+            else:
+                self.actions.append(torch.zeros(3, device=frame_latent.device))
+            self.frame_indices.append(frame_idx)
+            self.scores.append(initial_score)
+            self.usage_counts.append(0)
+            self.last_used.append(frame_idx)
+            return True
+        
+        # 缓存已满，需要替换最低分的记忆
+        min_score_idx = self.scores.index(min(self.scores))
+        min_score = self.scores[min_score_idx]
+        
+        # 如果新帧分数更高，替换掉最低分的记忆
+        if initial_score > min_score:
+            self.frames[min_score_idx] = frame_latent.detach()
+            self.poses[min_score_idx] = pose.detach()
+            if action is not None:
+                self.actions[min_score_idx] = action.detach()
+            else:
+                self.actions[min_score_idx] = torch.zeros(3, device=frame_latent.device)
+            self.frame_indices[min_score_idx] = frame_idx
+            self.scores[min_score_idx] = initial_score
+            self.usage_counts[min_score_idx] = 0
+            self.last_used[min_score_idx] = frame_idx
+            return True
+        
+        return False
+    
+    def compute_frame_score(self, pose: torch.Tensor, action: torch.Tensor = None, frame_idx: int = 0) -> float:
+        """
+        计算帧的综合评分，决定是否值得存储到记忆中
+        
+        Args:
+            pose: 当前位置 [x, y, z, yaw]
+            action: 当前动作 [delta_x, delta_y, delta_yaw] (归一化)
+            frame_idx: 帧索引
+            
+        Returns:
+            float: 综合评分 (0-5分)
+        """
+        score = 0.0
+        config = self.SCORING_CONFIG
+        
+        # 1. 动作重要性评分
+        if action is not None:
+            turn_magnitude = torch.abs(action[2]).item()  # |delta_yaw|
+            linear_magnitude = torch.norm(action[:2]).item()
+            
+            # 转弯动作评分
+            if turn_magnitude >= config['sharp_turn_threshold']:
+                score += config['sharp_turn_weight']  # 急转弯 +3分
+            elif turn_magnitude >= config['significant_turn_threshold']:
+                score += config['turn_action_weight']  # 重要转弯 +2分
+            
+            # 复杂动作评分 (转弯+移动)
+            if turn_magnitude >= 0.15 and linear_magnitude >= config['linear_motion_threshold']:
+                score += 1.0  # 复杂机动 +1分
+        
+        # 2. 空间多样性评分
+        if len(self.poses) > 0:
+            current_pos = pose[:3]
+            stored_poses = torch.stack(self.poses)
+            distances = torch.norm(stored_poses[:, :3] - current_pos, dim=1)
+            min_distance = torch.min(distances).item()
+            
+            # 如果距离现有记忆足够远，增加分数
+            if min_distance >= config['min_spatial_distance']:
+                score += config['spatial_diversity_weight'] * min(min_distance / 10.0, 1.0)
+        else:
+            score += 2.0  # 第一帧自动获得高分
+        
+        # 3. 角度多样性评分
+        if len(self.poses) > 0 and pose.shape[0] > 3:
+            current_yaw = pose[3].item()
+            stored_poses = torch.stack(self.poses)
+            if stored_poses.shape[1] > 3:
+                stored_yaws = stored_poses[:, 3]
+                yaw_differences = torch.abs(stored_yaws - current_yaw)
+                # 处理角度环绕
+                yaw_differences = torch.minimum(yaw_differences, 2 * torch.pi - yaw_differences)
+                min_yaw_diff = torch.min(yaw_differences).item()
+                
+                if min_yaw_diff >= config['min_angle_difference']:
+                    score += config['angle_diversity_weight'] * min(min_yaw_diff / torch.pi, 1.0)
+        
+        # 4. 视野清晰度评分 (基于位置特征)
+        # 简化版本：基于高度和开放程度估算
+        if pose.shape[0] >= 3:
+            height = pose[2].item()
+            # 假设更高的位置有更好的视野
+            clarity_score = min(height / 5.0, 1.0) * config['view_clarity_weight']
+            score += clarity_score
+        
+        # 限制分数范围
+        return min(score, config['max_score'])
+    
+    def update_usage_scores(self, used_indices: List[int], current_frame_idx: int):
+        """
+        更新使用过的记忆分数，实现动态评分调整
+        
+        Args:
+            used_indices: 本次推理中使用的记忆索引列表
+            current_frame_idx: 当前帧索引
+        """
+        config = self.SCORING_CONFIG
+        
+        # 提升使用过的记忆分数
+        for idx in used_indices:
+            if 0 <= idx < len(self.scores):
+                self.scores[idx] = min(
+                    self.scores[idx] + config['usage_boost'],
+                    config['max_score']
+                )
+                self.usage_counts[idx] += 1
+                self.last_used[idx] = current_frame_idx
+        
+        # 对未使用的记忆进行衰减
+        for i in range(len(self.scores)):
+            if i not in used_indices:
+                frames_since_use = current_frame_idx - self.last_used[i]
+                # 基于时间的衰减
+                decay = config['decay_rate'] * min(frames_since_use / 100.0, 1.0)
+                self.scores[i] = max(
+                    self.scores[i] - decay,
+                    config['min_survival_score']
+                )
+    
+    def should_store_frame(self, pose: torch.Tensor, action: torch.Tensor = None, 
+                          frame_idx: int = 0, min_distance: float = 5.0) -> bool:
+        """
+        判断是否应该将当前帧存储到记忆buffer中
+        现在基于综合评分系统
+        """
+        score = self.compute_frame_score(pose, action, frame_idx)
+        return score >= self.min_score_threshold
     
     def get_relevant_frames(self, current_pose: torch.Tensor, target_action: torch.Tensor = None, k: int = 8) -> Optional[torch.Tensor]:
         """
-        Retrieve k most relevant frames based on spatial proximity and action intent
-        Focus on behavioral relevance rather than pose similarity
+        基于动作相似性和记忆分数检索最相关的帧
+        重点关注：相似动作 -> 相似变化 -> 寻找最近几帧
+        
+        Args:
+            current_pose: 当前位置
+            target_action: 目标动作 (当前要执行的动作)
+            k: 返回的帧数量
         """
         if len(self.frames) == 0:
             return None
@@ -61,174 +225,162 @@ class MemoryBuffer:
         if len(self.frames) <= k:
             return torch.stack(self.frames).to(current_pose.device)
         
-        # Vectorized similarity computation for efficiency - pure GPU operations for cluster training
-        current_pos = current_pose[:3]  # Keep on GPU for cluster compatibility
-        memory_poses = torch.stack(self.poses).to(current_pose.device)  # Ensure same device
+        # 记录使用的索引，用于后续分数更新
+        used_indices = []
         
-        # 1. Spatial distance computation (primary factor)
-        if current_pose.shape[0] >= 2:  # At least x, y available
-            pose_dims = min(3, memory_poses.shape[1])  # Use up to 3 dimensions
-            spatial_dists = torch.norm(memory_poses[:, :pose_dims] - current_pos[:pose_dims], dim=1)
-            spatial_sims = torch.exp(-spatial_dists / 10.0)
-        else:
-            spatial_sims = torch.ones(len(self.poses), device=current_pose.device)
-        
-        # 2. Action-based similarity (if target action provided)
-        # Focus on BEHAVIORAL CATEGORIES rather than exact action matching
-        if target_action is not None and hasattr(self, 'actions') and len(self.actions) > 0:
-            target_action_gpu = target_action.to(current_pose.device)  # Keep on GPU for cluster training
-            memory_actions = torch.stack(self.actions).to(current_pose.device)  # Ensure on GPU
+        # 核心策略：相似的动作应该产生相似的变化
+        if target_action is not None:
+            # 1. 动作相似性评分 (主要因素)
+            memory_actions = torch.stack(self.actions).to(current_pose.device)
+            action_similarities = self._compute_action_similarity_for_retrieval(
+                target_action.to(current_pose.device), memory_actions
+            )
             
-            # Behavioral similarity based on movement categories
-            action_sims = self._compute_behavioral_similarity(target_action_gpu, memory_actions)
+            # 2. 记忆分数加权
+            memory_scores = torch.tensor(self.scores, device=current_pose.device)
+            # 归一化分数到[0,1]
+            norm_scores = memory_scores / self.SCORING_CONFIG['max_score']
             
-            # Combined similarity: prioritize spatial proximity, consider action patterns
-            similarities = 0.8 * spatial_sims + 0.2 * action_sims
+            # 3. 空间相关性（次要因素）
+            current_pos = current_pose[:3]
+            memory_poses = torch.stack(self.poses).to(current_pose.device)
+            spatial_dists = torch.norm(memory_poses[:, :3] - current_pos, dim=1)
+            spatial_similarities = torch.exp(-spatial_dists / 8.0)  # 降低空间权重
+            
+            # 综合评分：动作相似性60% + 记忆分数30% + 空间相关性10%
+            final_similarities = (0.6 * action_similarities + 
+                                0.3 * norm_scores + 
+                                0.1 * spatial_similarities)
         else:
-            # Fall back to spatial similarity only
-            similarities = spatial_sims
+            # 没有目标动作时，主要基于记忆分数和空间相关性
+            memory_scores = torch.tensor(self.scores, device=current_pose.device)
+            norm_scores = memory_scores / self.SCORING_CONFIG['max_score']
+            
+            current_pos = current_pose[:3]
+            memory_poses = torch.stack(self.poses).to(current_pose.device)
+            spatial_dists = torch.norm(memory_poses[:, :3] - current_pos, dim=1)
+            spatial_similarities = torch.exp(-spatial_dists / 5.0)
+            
+            final_similarities = 0.7 * norm_scores + 0.3 * spatial_similarities
         
-        # Select top-k (single operation, no loop)
-        top_k_indices = torch.topk(similarities, min(k, len(similarities))).indices
+        # 选择top-k
+        top_k_indices = torch.topk(final_similarities, min(k, len(final_similarities))).indices
+        used_indices = top_k_indices.tolist()
+        
+        # 更新使用统计（如果有frame_counter信息）
+        if hasattr(self, 'current_frame_idx'):
+            self.update_usage_scores(used_indices, self.current_frame_idx)
+        
         relevant_frames = [self.frames[i] for i in top_k_indices]
         return torch.stack(relevant_frames).to(current_pose.device)
     
-    def _compute_behavioral_similarity(self, target_action: torch.Tensor, memory_actions: torch.Tensor) -> torch.Tensor:
+    def _compute_action_similarity_for_retrieval(self, target_action: torch.Tensor, memory_actions: torch.Tensor) -> torch.Tensor:
         """
-        Compute behavioral similarity based on action semantics rather than simple numerical distance
-        Considers turning directionality and movement pattern classification for cluster GPU training
-        
-        Args:
-            target_action: [delta_x, delta_y, delta_yaw] target action
-            memory_actions: [N, 3] historical action set
-            
-        Returns:
-            torch.Tensor: [N] behavioral similarity scores
+        专门为检索设计的动作相似性计算
+        重点：相似动作应该找到最近的相似执行案例
         """
-        # Extract movement components
-        target_linear = target_action[:2]  # [delta_x, delta_y]
-        target_yaw = target_action[2]      # delta_yaw
+        target_linear = target_action[:2]
+        target_yaw = target_action[2]
         
-        memory_linear = memory_actions[:, :2]  # [N, 2]
-        memory_yaw = memory_actions[:, 2]      # [N]
+        memory_linear = memory_actions[:, :2]
+        memory_yaw = memory_actions[:, 2]
         
-        # 1. Linear movement similarity (displacement vector)
+        # 1. 线性运动相似性
         target_linear_norm = torch.norm(target_linear)
         memory_linear_norm = torch.norm(memory_linear, dim=1)
         
-        # 归一化后的线性移动阈值
-        LINEAR_THRESHOLD = 0.307  # 原 0.1 meter，归一化后
+        # 运动幅度相似性
+        magnitude_diff = torch.abs(target_linear_norm - memory_linear_norm)
+        magnitude_sims = torch.exp(-magnitude_diff / 0.3)  # 更严格的幅度匹配
         
-        # Movement magnitude similarity
-        magnitude_sims = torch.exp(-torch.abs(target_linear_norm - memory_linear_norm) / 2.0)
-        
-        # Movement direction similarity (only compute for non-zero movements)
+        # 运动方向相似性
         direction_sims = torch.ones_like(magnitude_sims)
-        if target_linear_norm > LINEAR_THRESHOLD:  # Significant linear movement (归一化后)
+        if target_linear_norm > 0.1:  # 有明显线性运动
             target_direction = target_linear / target_linear_norm
-            valid_memory = memory_linear_norm > LINEAR_THRESHOLD
+            valid_memory = memory_linear_norm > 0.1
             if valid_memory.any():
                 memory_directions = memory_linear[valid_memory] / memory_linear_norm[valid_memory].unsqueeze(1)
                 dot_products = torch.mm(memory_directions, target_direction.unsqueeze(1)).squeeze()
-                direction_sims[valid_memory] = (dot_products + 1) / 2  # Map from [-1,1] to [0,1]
+                direction_sims[valid_memory] = torch.clamp((dot_products + 1) / 2, 0, 1)
         
-        # 2. Rotation behavior classification similarity
-        yaw_sims = self._compute_rotation_similarity(target_yaw, memory_yaw)
+        # 2. 转向行为相似性 - 更精确匹配
+        yaw_sims = self._compute_precise_rotation_similarity(target_yaw, memory_yaw)
         
-        # 3. Combined behavioral similarity
-        # Weights: linear movement(40%) + direction(30%) + rotation behavior(30%)
-        behavioral_sims = 0.4 * magnitude_sims + 0.3 * direction_sims + 0.3 * yaw_sims
+        # 3. 综合相似性：对于检索，我们更关注精确匹配
+        # 线性运动50% + 方向25% + 转向25%
+        action_similarities = 0.5 * magnitude_sims + 0.25 * direction_sims + 0.25 * yaw_sims
         
-        return behavioral_sims
+        return action_similarities
     
-    def _compute_rotation_similarity(self, target_yaw: torch.Tensor, memory_yaw: torch.Tensor) -> torch.Tensor:
+    def _compute_precise_rotation_similarity(self, target_yaw: torch.Tensor, memory_yaw: torch.Tensor) -> torch.Tensor:
         """
-        Rotation behavior semantic similarity computation - turning and straight movement have different scoring criteria
-        Ensure turning actions have significantly lower similarity scores than straight movement to avoid confusion
-        
-        Behavior classification (归一化后的阈值):
-        - Straight: |yaw| < 0.032 (原0.1 rad ~6°) -> high similarity baseline (0.9-1.0)
-        - Minor adjustment: 0.032 <= |yaw| < 0.096 (原0.3 rad ~17°) -> medium similarity (0.6-0.8)
-        - Turn: 0.096 <= |yaw| < 0.318 (原1.0 rad ~57°) -> low similarity (0.3-0.6)
-        - Sharp turn: |yaw| >= 0.318 (原>1.0 rad ~57°+) -> lowest similarity (0.1-0.4)
-        
-        注意：yaw现在已归一化到[-1,1]范围，阈值相应调整
+        精确的转向相似性计算，用于动作检索
+        重点：相同类型的转向动作应该获得高相似性
         """
-        device = target_yaw.device
-        
-        # 归一化后的行为分类阈值
-        STRAIGHT_THRESHOLD = 0.032    # 原 0.1 rad
-        MINOR_THRESHOLD = 0.096       # 原 0.3 rad  
-        TURN_THRESHOLD = 0.318        # 原 1.0 rad
-        
-        # Rotation direction classification
-        target_direction = torch.sign(target_yaw)  # -1, 0, 1
-        memory_direction = torch.sign(memory_yaw)   # [N]
-        
-        # Rotation magnitude classification
-        def categorize_rotation(yaw_abs):
-            """Classify rotation magnitude using normalized thresholds"""
-            return torch.where(yaw_abs < STRAIGHT_THRESHOLD, 0,      # straight
-                   torch.where(yaw_abs < MINOR_THRESHOLD, 1,         # minor adjustment
-                   torch.where(yaw_abs < TURN_THRESHOLD, 2, 3)))     # turn / sharp turn
+        config = self.SCORING_CONFIG
         
         target_abs = torch.abs(target_yaw)
         memory_abs = torch.abs(memory_yaw)
         
-        target_category = categorize_rotation(target_abs)
-        memory_categories = categorize_rotation(memory_abs)
+        # 转向类型分类
+        def classify_turn(yaw_abs):
+            if yaw_abs < 0.1:  # 直行
+                return 0
+            elif yaw_abs < config['significant_turn_threshold']:  # 微调
+                return 1
+            elif yaw_abs < config['sharp_turn_threshold']:  # 转弯
+                return 2
+            else:  # 急转弯
+                return 3
         
-        # Compute similarity - different behavior categories have different scoring baselines
-        direction_match = (target_direction == memory_direction).float()
-        category_match = (target_category == memory_categories).float()
+        target_class = classify_turn(target_abs)
+        memory_classes = torch.tensor([classify_turn(y) for y in memory_abs], device=memory_yaw.device)
         
-        # Initialize similarity scores
-        yaw_sims = torch.zeros_like(memory_yaw, device=device)
+        # 方向匹配
+        target_direction = torch.sign(target_yaw)
+        memory_directions = torch.sign(memory_yaw)
+        direction_match = (target_direction == memory_directions).float()
         
-        # Category-wise processing, ensure clear scoring differences between turning and straight movement
+        # 类型匹配
+        class_match = (target_class == memory_classes).float()
         
-        # 1. Straight category (target is straight movement)
-        if target_category == 0:
-            # When going straight, prioritize other straight actions
-            straight_mask = (memory_categories == 0)
-            yaw_sims[straight_mask] = 1.0  # Perfect match for straight movements
-            
-            # Give lower scores to minor adjustments
-            minor_adjust_mask = (memory_categories == 1)
-            yaw_sims[minor_adjust_mask] = 0.3
-            
-            # Give very low scores to turns
-            turn_mask = (memory_categories >= 2)
-            yaw_sims[turn_mask] = 0.1
-            
-        # 2. Turning category (target is turning)
-        else:
-            # Perfect match: same direction same category
-            perfect_match = (direction_match == 1) & (category_match == 1)
-            # Set different base scores based on category, turning categories have lower base scores
-            base_scores = torch.tensor([0.9, 0.7, 0.5, 0.3], device=device)  # straight, minor, turn, sharp
-            yaw_sims[perfect_match] = base_scores[target_category]
-            
-            # Same direction different category: give medium scores
-            direction_only = (direction_match == 1) & (category_match == 0)
-            if direction_only.any():
-                # Decay based on angle difference
-                yaw_diff = torch.abs(target_abs - memory_abs[direction_only])
-                angle_similarity = torch.exp(-yaw_diff / 0.5)
-                # Apply category penalty
-                category_penalty = base_scores[target_category] * 0.7
-                yaw_sims[direction_only] = angle_similarity * category_penalty
-            
-            # Opposite direction: extremely low scores
-            opposite_direction = (direction_match == 0) & (target_category > 0) & (memory_categories > 0)
-            yaw_sims[opposite_direction] = 0.05
-            
-            # Turning vs straight: low scores
-            turning_vs_straight = (target_category > 0) & (memory_categories == 0)
-            yaw_sims[turning_vs_straight] = 0.1
+        # 角度差异
+        yaw_diff = torch.abs(target_yaw - memory_yaw)
+        angle_similarity = torch.exp(-yaw_diff / 0.2)  # 更严格的角度匹配
         
-        return yaw_sims
-
+        # 综合评分：完全匹配 > 同类型同方向 > 角度相近
+        similarities = (0.5 * class_match * direction_match +  # 完全匹配
+                       0.3 * class_match +                    # 同类型
+                       0.2 * angle_similarity)                # 角度相近
+        
+        return similarities
+    
+    def get_memory_stats(self) -> dict:
+        """获取记忆缓存的统计信息，用于调试和监控"""
+        if len(self.frames) == 0:
+            return {"empty": True}
+        
+        return {
+            "total_memories": len(self.frames),
+            "max_capacity": self.max_size,
+            "average_score": sum(self.scores) / len(self.scores),
+            "highest_score": max(self.scores),
+            "lowest_score": min(self.scores),
+            "total_usage": sum(self.usage_counts),
+            "most_used_count": max(self.usage_counts) if self.usage_counts else 0,
+            "scoring_config": self.SCORING_CONFIG
+        }
+    
+    def reset_memory(self):
+        """重置记忆缓存"""
+        self.frames.clear()
+        self.poses.clear()
+        self.actions.clear()
+        self.frame_indices.clear()
+        self.scores.clear()
+        self.usage_counts.clear()
+        self.last_used.clear()
+    
 
 class SelectiveMemoryAttention(nn.Module):
     """
@@ -495,10 +647,21 @@ class HybridCDiT(nn.Module):
         nn.init.constant_(self.final_layer.linear.bias, 0)
     
     def update_memory(self, frame_latent: torch.Tensor, pose: torch.Tensor, action: torch.Tensor = None):
-        """Update memory buffer with new frame and associated action"""
+        """智能更新记忆缓存，基于评分系统决定存储"""
         if self.memory_buffer is not None:
-            self.memory_buffer.add_frame(frame_latent, pose, action, self.frame_counter)
+            # 使用智能存储机制
+            stored = self.memory_buffer.add_frame(frame_latent, pose, action, self.frame_counter)
+            # 更新当前帧索引，用于分数衰减计算
+            self.memory_buffer.current_frame_idx = self.frame_counter
             self.frame_counter += 1
+            return stored
+        return False
+    
+    def get_memory_stats(self):
+        """获取记忆系统的统计信息"""
+        if self.memory_buffer is not None:
+            return self.memory_buffer.get_memory_stats()
+        return {"memory_disabled": True}
     
     def compute_memory_activation_score(self, current_pose: torch.Tensor, 
                                        action_magnitude: float) -> float:
