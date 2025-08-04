@@ -214,28 +214,45 @@ def compute_memory_activation_score(self, current_pose, action_magnitude):
 
 ### 内存使用策略
 
-**重要**：内存buffer只在推理阶段使用，训练时完全跳过
+**重要更新**：分离存储和推理逻辑，实现分层内存机制
 
 ```python
 def forward(self, x, t, y, x_cond, rel_t, current_pose=None, update_memory=True):
     # ... 模型前向传播 ...
     
-    # 内存检索：只在推理时(非训练模式)进行
+    # 内存检索：只在推理时且指定层进行
     if self.memory_enabled and current_pose is not None and not self.training:
-        target_action = y[0] if y is not None else None
-        memory_frames = self.memory_buffer.get_relevant_frames(
-            current_pose[0], target_action=target_action, k=8
-        )
+        memory_frames = self.memory_buffer.get_relevant_frames(...)
     
-    # ... 处理过程 ...
+    # 分层处理：
+    for i, block in enumerate(self.blocks):
+        if i in self.memory_layers:
+            # 后期层：既存储又使用记忆进行推理
+            x = block(x, c, x_cond, memory_frames, memory_activation_score)
+        else:
+            # 前期层（0-15）：只进行标准CDiT处理，不使用记忆推理
+            x = block(x, c, x_cond)
     
-    # 内存更新：只在推理时进行
+    # 内存存储：推理时所有层都进行存储
+    # 关键设计：即使前15层不使用记忆推理，也会存储记忆
     if update_memory and self.memory_enabled and not self.training:
         current_action = y[0] if y is not None else None
-        self.memory_buffer.add_frame(x.detach(), current_pose[0], current_action)
+        self.update_memory(x.detach(), current_pose[0], current_action)
     
     return x
 ```
+
+### 分层内存设计
+
+1. **前期层（0-15层）**：
+   - ✅ **激活记忆存储**：持续积累历史经验
+   - ❌ **不使用记忆推理**：保持CDiT的原始处理能力
+   - 🎯 **设计目的**：确保记忆系统始终在工作，为后续层提供丰富素材
+
+2. **后期层（memory_layers）**：
+   - ✅ **激活记忆存储**：继续积累经验
+   - ✅ **使用记忆推理**：利用历史经验增强生成
+   - 🎯 **设计目的**：基于积累的记忆进行智能决策
 
 ### 训练优势
 
@@ -243,6 +260,7 @@ def forward(self, x, t, y, x_cond, rel_t, current_pose=None, update_memory=True)
 2. **无内存开销**：训练时不使用buffer，节省内存和计算资源
 3. **简洁高效**：训练逻辑与标准CDiT基本相同，稳定可靠
 4. **推理增强**：内存机制仅在推理时启用，提供额外的上下文信息
+5. **连续记忆**：前期层的持续存储确保记忆系统不间断工作
 
 ## 性能优化
 
@@ -324,6 +342,103 @@ WorldMem-CDiT 混合内存系统通过"**合理性优于相似性**"的设计理
 - ✅ **自适应激活**：根据场景复杂度智能使用内存
 
 这种设计使得模型能够在合适的时机调用合适的历史经验，显著提升导航的智能性和鲁棒性。
+
+## 智能存储机制优化
+
+### 当前存储策略分析
+
+**现状**：目前所有帧都无条件存储到memory buffer
+- ✅ **优点**：确保不丢失任何信息
+- ❌ **缺点**：可能存储大量冗余或低价值信息
+
+### 关键位置检测
+
+**建议实现基于场景重要性的选择性存储**：
+
+1. **大转弯检测**：
+   ```python
+   # 检测显著转向动作
+   if abs(delta_yaw) > SIGNIFICANT_TURN_THRESHOLD:
+       should_store = True  # 转弯时的视觉信息很重要
+   ```
+
+2. **关键地标识别**：
+   ```python
+   # 未来扩展：基于视觉特征检测地标
+   if detect_landmark(frame_features):
+       should_store = True  # 地标位置需要记忆
+   ```
+
+3. **行为变化点**：
+   ```python
+   # 检测行为模式变化
+   if action_pattern_changed(current_action, previous_actions):
+       should_store = True  # 行为转换点很重要
+   ```
+
+4. **空间多样性**：
+   ```python
+   # 确保空间覆盖的多样性
+   if spatial_diversity_score(current_pose, buffer_poses) > threshold:
+       should_store = True  # 新区域需要记忆
+   ```
+
+### 存储价值评估框架
+
+```python
+def compute_storage_value(frame, pose, action, buffer_state):
+    """
+    计算帧的存储价值分数
+    
+    评估维度：
+    1. 行为重要性（转弯、停止、加速等）
+    2. 空间新颖性（是否到达新区域）
+    3. 时间间隔（避免连续相似帧）
+    4. 缓冲区多样性（平衡不同类型经验）
+    """
+    
+    # 1. 行为重要性评分
+    behavior_score = evaluate_action_significance(action)
+    
+    # 2. 空间新颖性评分  
+    spatial_score = evaluate_spatial_novelty(pose, buffer_state.poses)
+    
+    # 3. 时间多样性评分
+    temporal_score = evaluate_temporal_diversity(buffer_state.timestamps)
+    
+    # 4. 缓冲区平衡评分
+    balance_score = evaluate_buffer_balance(action, buffer_state.actions)
+    
+    # 综合评分
+    storage_value = (0.4 * behavior_score + 
+                    0.3 * spatial_score + 
+                    0.2 * temporal_score + 
+                    0.1 * balance_score)
+    
+    return storage_value
+```
+
+### 实现建议
+
+1. **阶段性实现**：
+   - 第一阶段：基于转弯幅度的简单过滤
+   - 第二阶段：加入空间多样性考虑
+   - 第三阶段：引入视觉地标检测
+
+2. **存储阈值动态调整**：
+   ```python
+   # 根据buffer占用率动态调整存储阈值
+   if buffer_utilization < 0.5:
+       storage_threshold = 0.3  # 宽松标准
+   elif buffer_utilization < 0.8:
+       storage_threshold = 0.5  # 中等标准
+   else:
+       storage_threshold = 0.7  # 严格标准
+   ```
+
+3. **优先级替换策略**：
+   - 当buffer满时，优先替换价值评分最低的帧
+   - 保留关键转弯点和地标位置的记忆
 
 ## 完全归一化更新
 

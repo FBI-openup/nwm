@@ -581,15 +581,21 @@ class HybridCDiT(nn.Module):
         # Transformer blocks with selective memory
         for i, block in enumerate(self.blocks):
             if i in self.memory_layers:
+                # Use memory for inference in specified layers
                 x = block(x, c, x_cond, memory_frames, memory_activation_score)
             else:
-                x = block(x, c, x_cond)  # Standard CDiT processing
+                # Standard CDiT processing (no memory usage for inference)
+                x = block(x, c, x_cond)
         
         # Final processing
         x = self.final_layer(x, c)
         x = self.unpatchify(x)
         
-        # Update memory only during inference, skip during training for GPU cluster efficiency
+        # Update memory during inference for all layers (storage happens regardless of layer)
+        # Key design: 
+        # - Layers 0-15 (non-memory): Store to memory but don't use memory for inference
+        # - Later layers (memory): Both store to memory and use memory for inference
+        # This ensures continuous memory building even when only using CDiT
         if update_memory and self.memory_enabled and current_pose is not None and not self.training:
             current_action = y[0] if y is not None else None  # Store the action that led to this frame
             self.update_memory(x.detach(), current_pose[0], current_action)
