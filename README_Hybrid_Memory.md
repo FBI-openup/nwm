@@ -324,3 +324,46 @@ WorldMem-CDiT 混合内存系统通过"**合理性优于相似性**"的设计理
 - ✅ **自适应激活**：根据场景复杂度智能使用内存
 
 这种设计使得模型能够在合适的时机调用合适的历史经验，显著提升导航的智能性和鲁棒性。
+
+## 完全归一化更新
+
+### 核心修改
+
+为解决yaw权重不平衡问题，已实现**完全归一化**方案：
+
+**问题**：原始yaw范围[-3.14, 3.14]与dx/dy范围相近，导致某些情况下yaw主导距离计算，影响训练稳定性。
+
+**解决**：所有action维度（dx, dy, dyaw）统一归一化到[-1,1]范围。
+
+### 代码修改
+
+```python
+# datasets.py & latent_dataset.py - 完全归一化
+actions = normalize_data(actions, self.ACTION_STATS)  # 所有3维
+goal_pos = normalize_data(goal_pos, self.ACTION_STATS)  # 所有3维
+
+# hybrid_models.py - 调整行为分类阈值
+STRAIGHT_THRESHOLD = 0.032    # 原 0.1 rad (~6°)
+MINOR_THRESHOLD = 0.096       # 原 0.3 rad (~17°)  
+TURN_THRESHOLD = 0.318        # 原 1.0 rad (~57°)
+LINEAR_THRESHOLD = 0.307      # 原 0.1 meter
+```
+
+### 优势
+
+- ✅ **权重平衡**：消除yaw主导距离计算的问题
+- ✅ **训练稳定**：各维度梯度scale一致，减少数值不稳定
+- ✅ **语义保持**：行为分类阈值精确调整，保持原有语义正确性
+- ✅ **内存一致**：存储和检索都使用归一化值，逻辑一致
+
+### 重要提醒
+
+⚠️ **破坏性修改**：需要重新预处理数据和重新开始训练
+
+```bash
+# 重新预处理
+cd latent-encoding && ./encode_all_datasets.sh
+
+# 重新训练
+python train.py [配置]
+```

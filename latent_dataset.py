@@ -216,7 +216,7 @@ class LatentTrainingDataset(LatentBaseDataset):
 
             # Compute actions
             _, goal_pos = self._compute_actions(curr_traj_data, curr_time, goal_time)
-            goal_pos[:, :2] = normalize_data(goal_pos[:, :2], self.ACTION_STATS)
+            goal_pos = normalize_data(goal_pos, self.ACTION_STATS)  # 归一化所有3维 [dx, dy, dyaw]
 
             return (
                 obs_latents,
@@ -272,7 +272,7 @@ class LatentEvalDataset(LatentBaseDataset):
 
             # Compute actions
             actions, _ = self._compute_actions(curr_traj_data, curr_time, np.array([curr_time+1])) # last argument is dummy goal
-            actions[:, :2] = normalize_data(actions[:, :2], self.ACTION_STATS)
+            actions = normalize_data(actions, self.ACTION_STATS)  # 归一化所有3维 [dx, dy, dyaw]
             delta = get_delta_np(actions)
 
             return (

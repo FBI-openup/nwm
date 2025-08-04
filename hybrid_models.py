@@ -116,14 +116,17 @@ class MemoryBuffer:
         target_linear_norm = torch.norm(target_linear)
         memory_linear_norm = torch.norm(memory_linear, dim=1)
         
+        # 归一化后的线性移动阈值
+        LINEAR_THRESHOLD = 0.307  # 原 0.1 meter，归一化后
+        
         # Movement magnitude similarity
         magnitude_sims = torch.exp(-torch.abs(target_linear_norm - memory_linear_norm) / 2.0)
         
         # Movement direction similarity (only compute for non-zero movements)
         direction_sims = torch.ones_like(magnitude_sims)
-        if target_linear_norm > 0.1:  # Significant linear movement
+        if target_linear_norm > LINEAR_THRESHOLD:  # Significant linear movement (归一化后)
             target_direction = target_linear / target_linear_norm
-            valid_memory = memory_linear_norm > 0.1
+            valid_memory = memory_linear_norm > LINEAR_THRESHOLD
             if valid_memory.any():
                 memory_directions = memory_linear[valid_memory] / memory_linear_norm[valid_memory].unsqueeze(1)
                 dot_products = torch.mm(memory_directions, target_direction.unsqueeze(1)).squeeze()
@@ -143,13 +146,20 @@ class MemoryBuffer:
         Rotation behavior semantic similarity computation - turning and straight movement have different scoring criteria
         Ensure turning actions have significantly lower similarity scores than straight movement to avoid confusion
         
-        Behavior classification:
-        - Straight: |yaw| < 0.1 rad (~6°) -> high similarity baseline (0.9-1.0)
-        - Minor adjustment: 0.1 <= |yaw| < 0.3 rad (~6°-17°) -> medium similarity (0.6-0.8)
-        - Turn: 0.3 <= |yaw| < 1.0 rad (~17°-57°) -> low similarity (0.3-0.6)
-        - Sharp turn: |yaw| >= 1.0 rad (~57°+) -> lowest similarity (0.1-0.4)
+        Behavior classification (归一化后的阈值):
+        - Straight: |yaw| < 0.032 (原0.1 rad ~6°) -> high similarity baseline (0.9-1.0)
+        - Minor adjustment: 0.032 <= |yaw| < 0.096 (原0.3 rad ~17°) -> medium similarity (0.6-0.8)
+        - Turn: 0.096 <= |yaw| < 0.318 (原1.0 rad ~57°) -> low similarity (0.3-0.6)
+        - Sharp turn: |yaw| >= 0.318 (原>1.0 rad ~57°+) -> lowest similarity (0.1-0.4)
+        
+        注意：yaw现在已归一化到[-1,1]范围，阈值相应调整
         """
         device = target_yaw.device
+        
+        # 归一化后的行为分类阈值
+        STRAIGHT_THRESHOLD = 0.032    # 原 0.1 rad
+        MINOR_THRESHOLD = 0.096       # 原 0.3 rad  
+        TURN_THRESHOLD = 0.318        # 原 1.0 rad
         
         # Rotation direction classification
         target_direction = torch.sign(target_yaw)  # -1, 0, 1
@@ -157,10 +167,10 @@ class MemoryBuffer:
         
         # Rotation magnitude classification
         def categorize_rotation(yaw_abs):
-            """Classify rotation magnitude"""
-            return torch.where(yaw_abs < 0.1, 0,      # straight
-                   torch.where(yaw_abs < 0.3, 1,      # minor adjustment
-                   torch.where(yaw_abs < 1.0, 2, 3))) # turn / sharp turn
+            """Classify rotation magnitude using normalized thresholds"""
+            return torch.where(yaw_abs < STRAIGHT_THRESHOLD, 0,      # straight
+                   torch.where(yaw_abs < MINOR_THRESHOLD, 1,         # minor adjustment
+                   torch.where(yaw_abs < TURN_THRESHOLD, 2, 3)))     # turn / sharp turn
         
         target_abs = torch.abs(target_yaw)
         memory_abs = torch.abs(memory_yaw)

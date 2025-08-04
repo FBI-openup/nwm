@@ -124,14 +124,41 @@ def plot_images_and_actions(dataset_name, curr_viz_obs_image, curr_viz_goal_imag
 
 def normalize_data(data, stats):
     # nomalize to [0,1]
-    ndata = (data - stats['min']) / (stats['max'] - stats['min'])
+    stats_min = np.array(stats['min'])
+    stats_max = np.array(stats['max'])
+    
+    # Handle the case where data has fewer dimensions than stats
+    # This allows backward compatibility
+    if data.shape[-1] <= len(stats_min):
+        ndata = (data - stats_min[:data.shape[-1]]) / (stats_max[:data.shape[-1]] - stats_min[:data.shape[-1]])
+    else:
+        # If data has more dimensions, only normalize available stats dimensions
+        ndata = data.copy()
+        ndata[..., :len(stats_min)] = (data[..., :len(stats_min)] - stats_min) / (stats_max - stats_min)
+    
     # normalize to [-1, 1]
     ndata = ndata * 2 - 1
     return ndata
 
 def unnormalize_data(ndata, stats):
-    ndata = (ndata + 1) / 2
-    data = ndata * (stats['max'].to(ndata) - stats['min'].to(ndata)) + stats['min'].to(ndata)
+    # Handle different tensor/numpy types
+    if isinstance(stats['min'], torch.Tensor):
+        stats_min = stats['min']
+        stats_max = stats['max']
+    else:
+        stats_min = torch.tensor(stats['min']).to(ndata.device)
+        stats_max = torch.tensor(stats['max']).to(ndata.device)
+    
+    # unnormalize from [-1, 1] to [0, 1]
+    data = (ndata + 1) / 2
+    
+    # Handle the case where data has fewer dimensions than stats
+    if ndata.shape[-1] <= len(stats_min):
+        data = data * (stats_max[:ndata.shape[-1]] - stats_min[:ndata.shape[-1]]) + stats_min[:ndata.shape[-1]]
+    else:
+        # If data has more dimensions, only unnormalize available stats dimensions
+        data[..., :len(stats_min)] = data[..., :len(stats_min)] * (stats_max - stats_min) + stats_min
+    
     return data
 
 def get_data_path(data_folder: str, f: str, time: int, data_type: str = "image"):
