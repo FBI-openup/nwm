@@ -23,27 +23,32 @@ class MemoryBuffer:
     def __init__(self, max_size: int = 40, min_score_threshold: float = 0.3):
         # === 可配置评分参数 (方便调参) ===
         self.SCORING_CONFIG = {
-            # 初始分数权重
-            'turn_action_weight': 2.0,        # 转弯动作重要性
-            'sharp_turn_weight': 3.0,         # 急转弯额外加权
-            'view_clarity_weight': 1.5,       # 视野开阔度权重
-            'spatial_diversity_weight': 1.8,  # 空间分布多样性
-            'angle_diversity_weight': 1.2,    # 角度多样性
+            # === 存储标准参数 (严格筛选关键帧) ===
+            'storage_turn_weight': 3.0,          # 存储：转弯动作重要性
+            'storage_sharp_turn_weight': 4.0,    # 存储：急转弯额外加权
+            'storage_spatial_weight': 2.5,       # 存储：空间独特性权重
+            'storage_angle_weight': 2.0,         # 存储：角度多样性权重
+            'storage_height_weight': 1.8,        # 存储：高度优势权重
+            'storage_min_distance': 4.0,         # 存储：最小空间间距要求
+            'storage_min_angle_diff': 1.2,       # 存储：最小角度差异要求
             
-            # 动态调整参数
-            'usage_boost': 0.2,               # 每次使用的分数提升
-            'decay_rate': 0.05,               # 未使用时的衰减率
-            'max_score': 5.0,                 # 最高分数上限
-            'min_survival_score': 0.1,        # 保留的最低分数
+            # === 检索标准参数 (灵活匹配相关记忆) ===
+            'retrieval_action_weight': 0.55,     # 检索：动作相似性权重
+            'retrieval_memory_weight': 0.20,     # 检索：记忆价值权重
+            'retrieval_spatial_weight': 0.15,    # 检索：空间相关性权重
+            'retrieval_usage_weight': 0.10,      # 检索：使用经验权重
+            'retrieval_spatial_radius': 10.0,    # 检索：空间匹配半径
+            
+            # === 通用参数 ===
+            'usage_boost': 0.2,                  # 每次使用的分数提升
+            'decay_rate': 0.05,                  # 未使用时的衰减率
+            'max_score': 5.0,                    # 最高分数上限
+            'min_survival_score': 0.1,           # 保留的最低分数
             
             # 行为分类阈值 (归一化后)
             'significant_turn_threshold': 0.25,  # 重要转弯阈值
             'sharp_turn_threshold': 0.45,        # 急转弯阈值
             'linear_motion_threshold': 0.2,      # 线性运动阈值
-            
-            # 空间分布参数
-            'min_spatial_distance': 3.0,         # 最小空间间距
-            'min_angle_difference': 1.0,         # 最小角度差异(弧度)
         }
         
         self.max_size = max_size
@@ -59,12 +64,12 @@ class MemoryBuffer:
         self.last_used = []        # 最后使用时间
         
     def add_frame(self, frame_latent: torch.Tensor, pose: torch.Tensor, action: torch.Tensor = None, frame_idx: int = 0):
-        """智能添加帧到记忆缓存，基于综合评分决定是否存储"""
-        # 计算新帧的初始分数
-        initial_score = self.compute_frame_score(pose, action, frame_idx)
+        """智能添加帧到记忆缓存，基于存储评分决定是否值得永久保存"""
+        # 计算新帧的存储价值分数（存储标准：更严格）
+        storage_score = self.compute_storage_score(pose, action, frame_idx)
         
-        # 如果分数过低，直接丢弃
-        if initial_score < self.min_score_threshold:
+        # 如果存储价值过低，直接丢弃
+        if storage_score < self.min_score_threshold:
             return False
         
         # 如果缓存未满，直接添加
@@ -76,7 +81,7 @@ class MemoryBuffer:
             else:
                 self.actions.append(torch.zeros(3, device=frame_latent.device))
             self.frame_indices.append(frame_idx)
-            self.scores.append(initial_score)
+            self.scores.append(storage_score)
             self.usage_counts.append(0)
             self.last_used.append(frame_idx)
             return True
@@ -86,7 +91,7 @@ class MemoryBuffer:
         min_score = self.scores[min_score_idx]
         
         # 如果新帧分数更高，替换掉最低分的记忆
-        if initial_score > min_score:
+        if storage_score > min_score:
             self.frames[min_score_idx] = frame_latent.detach()
             self.poses[min_score_idx] = pose.detach()
             if action is not None:
@@ -94,16 +99,17 @@ class MemoryBuffer:
             else:
                 self.actions[min_score_idx] = torch.zeros(3, device=frame_latent.device)
             self.frame_indices[min_score_idx] = frame_idx
-            self.scores[min_score_idx] = initial_score
+            self.scores[min_score_idx] = storage_score
             self.usage_counts[min_score_idx] = 0
             self.last_used[min_score_idx] = frame_idx
             return True
         
         return False
     
-    def compute_frame_score(self, pose: torch.Tensor, action: torch.Tensor = None, frame_idx: int = 0) -> float:
+    def compute_storage_score(self, pose: torch.Tensor, action: torch.Tensor = None, frame_idx: int = 0) -> float:
         """
-        计算帧的综合评分，决定是否值得存储到记忆中
+        计算帧的存储价值评分，决定是否值得永久保存到记忆中
+        存储标准：严格筛选，只保留真正有价值的关键帧
         
         Args:
             pose: 当前位置 [x, y, z, yaw]
@@ -111,40 +117,49 @@ class MemoryBuffer:
             frame_idx: 帧索引
             
         Returns:
-            float: 综合评分 (0-5分)
+            float: 存储价值评分 (0-5分)
         """
         score = 0.0
         config = self.SCORING_CONFIG
         
-        # 1. 动作重要性评分
+        # 1. 关键动作识别（存储重点：地标性动作）
         if action is not None:
             turn_magnitude = torch.abs(action[2]).item()  # |delta_yaw|
             linear_magnitude = torch.norm(action[:2]).item()
             
-            # 转弯动作评分
+            # 大转弯动作 - 这些是关键的导航节点
             if turn_magnitude >= config['sharp_turn_threshold']:
-                score += config['sharp_turn_weight']  # 急转弯 +3分
+                score += config['storage_sharp_turn_weight']  # 急转弯：重要地标 +4分
             elif turn_magnitude >= config['significant_turn_threshold']:
-                score += config['turn_action_weight']  # 重要转弯 +2分
+                score += config['storage_turn_weight']  # 重要转弯：次要地标 +3分
             
-            # 复杂动作评分 (转弯+移动)
+            # 复杂机动 - 可能是困难路段
             if turn_magnitude >= 0.15 and linear_magnitude >= config['linear_motion_threshold']:
-                score += 1.0  # 复杂机动 +1分
+                score += 1.5  # 复杂机动：困难路段记忆 +1.5分
+            
+            # 纯直行动作价值较低（除非其他因素很强）
+            if turn_magnitude < 0.1 and linear_magnitude < 0.15:
+                score -= 0.5  # 平凡动作：减分
         
-        # 2. 空间多样性评分
+        # 2. 空间独特性（存储重点：新区域探索）
         if len(self.poses) > 0:
             current_pos = pose[:3]
             stored_poses = torch.stack(self.poses)
             distances = torch.norm(stored_poses[:, :3] - current_pos, dim=1)
             min_distance = torch.min(distances).item()
             
-            # 如果距离现有记忆足够远，增加分数
-            if min_distance >= config['min_spatial_distance']:
-                score += config['spatial_diversity_weight'] * min(min_distance / 10.0, 1.0)
+            # 只有距离足够远的位置才值得存储
+            if min_distance >= config['storage_min_distance']:
+                # 距离越远，存储价值越高
+                distance_score = config['storage_spatial_weight'] * min(min_distance / 8.0, 2.0)
+                score += distance_score
+            else:
+                # 距离太近的位置存储价值很低
+                score -= 1.0
         else:
-            score += 2.0  # 第一帧自动获得高分
+            score += 2.5  # 第一帧：重要起点
         
-        # 3. 角度多样性评分
+        # 3. 视角独特性（存储重点：不同朝向的关键视角）
         if len(self.poses) > 0 and pose.shape[0] > 3:
             current_yaw = pose[3].item()
             stored_poses = torch.stack(self.poses)
@@ -155,19 +170,87 @@ class MemoryBuffer:
                 yaw_differences = torch.minimum(yaw_differences, 2 * torch.pi - yaw_differences)
                 min_yaw_diff = torch.min(yaw_differences).item()
                 
-                if min_yaw_diff >= config['min_angle_difference']:
-                    score += config['angle_diversity_weight'] * min(min_yaw_diff / torch.pi, 1.0)
+                # 只有角度差异足够大的视角才值得存储
+                if min_yaw_diff >= config['storage_min_angle_diff']:
+                    angle_score = config['storage_angle_weight'] * min(min_yaw_diff / torch.pi, 1.5)
+                    score += angle_score
+                else:
+                    # 相似视角存储价值降低
+                    score -= 0.3
         
-        # 4. 视野清晰度评分 (基于位置特征)
-        # 简化版本：基于高度和开放程度估算
+        # 4. 环境特征（存储重点：视野开阔、高度优势的位置）
         if pose.shape[0] >= 3:
             height = pose[2].item()
-            # 假设更高的位置有更好的视野
-            clarity_score = min(height / 5.0, 1.0) * config['view_clarity_weight']
-            score += clarity_score
+            # 高度优势：可能是重要的观察点
+            if height > 2.0:  # 假设高于2米的位置有观察价值
+                clarity_score = min(height / 3.0, 2.0) * config['storage_height_weight']
+                score += clarity_score
         
-        # 限制分数范围
-        return min(score, config['max_score'])
+        # 限制分数范围并应用更严格的阈值
+        final_score = min(max(score, 0.0), config['max_score'])
+        return final_score
+    
+    def compute_retrieval_score(self, current_pose: torch.Tensor, target_action: torch.Tensor = None) -> torch.Tensor:
+        """
+        计算检索相关性评分，决定哪些记忆对当前推理最有帮助
+        检索标准：灵活匹配，重点关注行为相似性
+        
+        Args:
+            current_pose: 当前位置
+            target_action: 目标动作 (当前要执行的动作)
+            
+        Returns:
+            torch.Tensor: 每个记忆的检索相关性分数
+        """
+        if len(self.frames) == 0:
+            return torch.tensor([])
+        
+        device = current_pose.device
+        
+        # 核心策略：相似的动作应该产生相似的变化
+        if target_action is not None:
+            # 1. 动作行为相似性（检索主要因素）
+            memory_actions = torch.stack(self.actions).to(device)
+            action_similarities = self._compute_action_similarity_for_retrieval(
+                target_action.to(device), memory_actions
+            )
+            
+            # 2. 记忆存储价值加权（次要因素）
+            memory_scores = torch.tensor(self.scores, device=device)
+            # 归一化分数到[0,1]
+            norm_scores = memory_scores / self.SCORING_CONFIG['max_score']
+            
+            # 3. 空间上下文相关性（辅助因素）
+            current_pos = current_pose[:3]
+            memory_poses = torch.stack(self.poses).to(device)
+            spatial_dists = torch.norm(memory_poses[:, :3] - current_pos, dim=1)
+            spatial_similarities = torch.exp(-spatial_dists / config['retrieval_spatial_radius'])  # 使用检索专用半径
+            
+            # 4. 使用频率加权（经验因素）
+            usage_scores = torch.tensor(self.usage_counts, device=device, dtype=torch.float)
+            usage_weights = torch.log(usage_scores + 1) / 5.0  # 对数缩放，避免过度偏向
+            
+            # 综合检索评分：使用检索专用权重
+            retrieval_scores = (config['retrieval_action_weight'] * action_similarities + 
+                               config['retrieval_memory_weight'] * norm_scores + 
+                               config['retrieval_spatial_weight'] * spatial_similarities +
+                               config['retrieval_usage_weight'] * usage_weights)
+        else:
+            # 没有目标动作时，主要基于记忆价值和空间相关性
+            memory_scores = torch.tensor(self.scores, device=device)
+            norm_scores = memory_scores / self.SCORING_CONFIG['max_score']
+            
+            current_pos = current_pose[:3]
+            memory_poses = torch.stack(self.poses).to(device)
+            spatial_dists = torch.norm(memory_poses[:, :3] - current_pos, dim=1)
+            spatial_similarities = torch.exp(-spatial_dists / 8.0)
+            
+            usage_scores = torch.tensor(self.usage_counts, device=device, dtype=torch.float)
+            usage_weights = torch.log(usage_scores + 1) / 5.0
+            
+            retrieval_scores = 0.5 * norm_scores + 0.3 * spatial_similarities + 0.2 * usage_weights
+        
+        return retrieval_scores
     
     def update_usage_scores(self, used_indices: List[int], current_frame_idx: int):
         """
@@ -204,15 +287,15 @@ class MemoryBuffer:
                           frame_idx: int = 0, min_distance: float = 5.0) -> bool:
         """
         判断是否应该将当前帧存储到记忆buffer中
-        现在基于综合评分系统
+        使用严格的存储标准
         """
-        score = self.compute_frame_score(pose, action, frame_idx)
+        score = self.compute_storage_score(pose, action, frame_idx)
         return score >= self.min_score_threshold
     
     def get_relevant_frames(self, current_pose: torch.Tensor, target_action: torch.Tensor = None, k: int = 8) -> Optional[torch.Tensor]:
         """
-        基于动作相似性和记忆分数检索最相关的帧
-        重点关注：相似动作 -> 相似变化 -> 寻找最近几帧
+        基于灵活的检索标准获取最相关的帧
+        重点关注：行为相似性 -> 实用性 -> 经验价值
         
         Args:
             current_pose: 当前位置
@@ -225,46 +308,11 @@ class MemoryBuffer:
         if len(self.frames) <= k:
             return torch.stack(self.frames).to(current_pose.device)
         
-        # 记录使用的索引，用于后续分数更新
-        used_indices = []
-        
-        # 核心策略：相似的动作应该产生相似的变化
-        if target_action is not None:
-            # 1. 动作相似性评分 (主要因素)
-            memory_actions = torch.stack(self.actions).to(current_pose.device)
-            action_similarities = self._compute_action_similarity_for_retrieval(
-                target_action.to(current_pose.device), memory_actions
-            )
-            
-            # 2. 记忆分数加权
-            memory_scores = torch.tensor(self.scores, device=current_pose.device)
-            # 归一化分数到[0,1]
-            norm_scores = memory_scores / self.SCORING_CONFIG['max_score']
-            
-            # 3. 空间相关性（次要因素）
-            current_pos = current_pose[:3]
-            memory_poses = torch.stack(self.poses).to(current_pose.device)
-            spatial_dists = torch.norm(memory_poses[:, :3] - current_pos, dim=1)
-            spatial_similarities = torch.exp(-spatial_dists / 8.0)  # 降低空间权重
-            
-            # 综合评分：动作相似性60% + 记忆分数30% + 空间相关性10%
-            final_similarities = (0.6 * action_similarities + 
-                                0.3 * norm_scores + 
-                                0.1 * spatial_similarities)
-        else:
-            # 没有目标动作时，主要基于记忆分数和空间相关性
-            memory_scores = torch.tensor(self.scores, device=current_pose.device)
-            norm_scores = memory_scores / self.SCORING_CONFIG['max_score']
-            
-            current_pos = current_pose[:3]
-            memory_poses = torch.stack(self.poses).to(current_pose.device)
-            spatial_dists = torch.norm(memory_poses[:, :3] - current_pos, dim=1)
-            spatial_similarities = torch.exp(-spatial_dists / 5.0)
-            
-            final_similarities = 0.7 * norm_scores + 0.3 * spatial_similarities
+        # 计算检索相关性分数（使用灵活的检索标准）
+        retrieval_scores = self.compute_retrieval_score(current_pose, target_action)
         
         # 选择top-k
-        top_k_indices = torch.topk(final_similarities, min(k, len(final_similarities))).indices
+        top_k_indices = torch.topk(retrieval_scores, min(k, len(retrieval_scores))).indices
         used_indices = top_k_indices.tolist()
         
         # 更新使用统计（如果有frame_counter信息）
