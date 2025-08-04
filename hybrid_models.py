@@ -20,32 +20,39 @@ class MemoryBuffer:
     智能记忆缓存系统，基于打分机制存储和检索关键帧
     支持动态评分调整和多因素综合评估
     """
-    def __init__(self, max_size: int = 40, min_score_threshold: float = 0.3):
-        # === 可配置评分参数 (方便调参) ===
+    def __init__(self, max_size: int = 40, min_score_threshold: float = 6.0):  # 0.3 * 20 = 6.0
+        # === 可配置评分参数 (100分制优化版) ===
         self.SCORING_CONFIG = {
             # === 存储标准参数 (严格筛选关键帧) ===
-            'storage_turn_weight': 3.0,          # 存储：转弯动作重要性
-            'storage_sharp_turn_weight': 4.0,    # 存储：急转弯额外加权
-            'storage_spatial_weight': 2.5,       # 存储：空间独特性权重
-            'storage_angle_weight': 2.0,         # 存储：角度多样性权重
-            'storage_height_weight': 1.8,        # 存储：高度优势权重
+            'storage_turn_weight': 35.0,         # 存储：转弯动作重要性
+            'storage_sharp_turn_weight': 50.0,   # 存储：急转弯额外加权  
+            'storage_spatial_weight': 30.0,      # 存储：空间独特性权重
+            'storage_angle_weight': 25.0,        # 存储：角度多样性权重
+            'storage_height_weight': 20.0,       # 存储：高度优势权重
+            'storage_complex_maneuver': 15.0,    # 存储：复杂机动加分
+            'storage_trivial_penalty': -8.0,     # 存储：平凡动作扣分
+            'storage_close_penalty': -12.0,      # 存储：位置太近扣分
+            'storage_similar_angle_penalty': -5.0, # 存储：相似视角扣分
+            'storage_first_frame_bonus': 40.0,   # 存储：第一帧起点奖励
             'storage_min_distance': 4.0,         # 存储：最小空间间距要求
             'storage_min_angle_diff': 1.2,       # 存储：最小角度差异要求
             
             # === 检索标准参数 (灵活匹配相关记忆) ===
-            'retrieval_action_weight': 0.55,     # 检索：动作相似性权重
-            'retrieval_memory_weight': 0.20,     # 检索：记忆价值权重
-            'retrieval_spatial_weight': 0.15,    # 检索：空间相关性权重
-            'retrieval_usage_weight': 0.10,      # 检索：使用经验权重
+            'retrieval_action_weight': 0.50,     # 检索：动作相似性权重 (主要)
+            'retrieval_memory_weight': 0.25,     # 检索：记忆价值权重 (重要)
+            'retrieval_spatial_weight': 0.15,    # 检索：空间相关性权重 (辅助)
+            'retrieval_usage_weight': 0.10,      # 检索：使用经验权重 (经验)
             'retrieval_spatial_radius': 10.0,    # 检索：空间匹配半径
             
-            # === 通用参数 ===
-            'usage_boost': 0.2,                  # 每次使用的分数提升
-            'decay_rate': 0.05,                  # 未使用时的衰减率
-            'max_score': 5.0,                    # 最高分数上限
-            'min_survival_score': 0.1,           # 保留的最低分数
+            # === 动态衰减系统参数 ===
+            'usage_boost': 5.0,                  # 每次使用的分数提升
+            'fixed_memory_time': 3,               # 固定记忆时间tx：前3步不衰减
+            'base_decay_rate': 1.2,               # 基础衰减率
+            'accelerated_decay_rate': 1.4,        # 加速衰减率a：衰减速度递增系数
+            'max_score': 100.0,                  # 最高分数上限
+            'min_survival_score': 3.0,           # 保留的最低分数
             
-            # 行为分类阈值 (归一化后)
+            # === 行为分类阈值 ===
             'significant_turn_threshold': 0.25,  # 重要转弯阈值
             'sharp_turn_threshold': 0.45,        # 急转弯阈值
             'linear_motion_threshold': 0.2,      # 线性运动阈值
@@ -59,9 +66,10 @@ class MemoryBuffer:
         self.poses = []
         self.actions = []
         self.frame_indices = []
-        self.scores = []           # 每个记忆的当前分数
+        self.scores = []           # 每个记忆的当前分数 (0-100分)
         self.usage_counts = []     # 使用次数统计
         self.last_used = []        # 最后使用时间
+        self.unused_steps = []     # 连续未使用步数（动态衰减关键指标）
         
     def add_frame(self, frame_latent: torch.Tensor, pose: torch.Tensor, action: torch.Tensor = None, frame_idx: int = 0):
         """智能添加帧到记忆缓存，基于存储评分决定是否值得永久保存"""
@@ -84,6 +92,7 @@ class MemoryBuffer:
             self.scores.append(storage_score)
             self.usage_counts.append(0)
             self.last_used.append(frame_idx)
+            self.unused_steps.append(0)  # 新记忆初始化为0步未使用
             return True
         
         # 缓存已满，需要替换最低分的记忆
@@ -102,6 +111,7 @@ class MemoryBuffer:
             self.scores[min_score_idx] = storage_score
             self.usage_counts[min_score_idx] = 0
             self.last_used[min_score_idx] = frame_idx
+            self.unused_steps[min_score_idx] = 0  # 新记忆重置未使用步数
             return True
         
         return False
@@ -117,7 +127,7 @@ class MemoryBuffer:
             frame_idx: 帧索引
             
         Returns:
-            float: 存储价值评分 (0-5分)
+            float: 存储价值评分 (0-100分)
         """
         score = 0.0
         config = self.SCORING_CONFIG
@@ -129,17 +139,17 @@ class MemoryBuffer:
             
             # 大转弯动作 - 这些是关键的导航节点
             if turn_magnitude >= config['sharp_turn_threshold']:
-                score += config['storage_sharp_turn_weight']  # 急转弯：重要地标 +4分
+                score += config['storage_sharp_turn_weight']  # 急转弯：重要地标
             elif turn_magnitude >= config['significant_turn_threshold']:
-                score += config['storage_turn_weight']  # 重要转弯：次要地标 +3分
+                score += config['storage_turn_weight']  # 重要转弯：次要地标
             
             # 复杂机动 - 可能是困难路段
             if turn_magnitude >= 0.15 and linear_magnitude >= config['linear_motion_threshold']:
-                score += 1.5  # 复杂机动：困难路段记忆 +1.5分
+                score += config['storage_complex_maneuver']  # 复杂机动：困难路段记忆
             
             # 纯直行动作价值较低（除非其他因素很强）
             if turn_magnitude < 0.1 and linear_magnitude < 0.15:
-                score -= 0.5  # 平凡动作：减分
+                score += config['storage_trivial_penalty']  # 平凡动作：减分
         
         # 2. 空间独特性（存储重点：新区域探索）
         if len(self.poses) > 0:
@@ -155,9 +165,9 @@ class MemoryBuffer:
                 score += distance_score
             else:
                 # 距离太近的位置存储价值很低
-                score -= 1.0
+                score += config['storage_close_penalty']
         else:
-            score += 2.5  # 第一帧：重要起点
+            score += config['storage_first_frame_bonus']  # 第一帧：重要起点
         
         # 3. 视角独特性（存储重点：不同朝向的关键视角）
         if len(self.poses) > 0 and pose.shape[0] > 3:
@@ -176,7 +186,7 @@ class MemoryBuffer:
                     score += angle_score
                 else:
                     # 相似视角存储价值降低
-                    score -= 0.3
+                    score += config['storage_similar_angle_penalty']
         
         # 4. 环境特征（存储重点：视野开阔、高度优势的位置）
         if pose.shape[0] >= 3:
@@ -224,13 +234,14 @@ class MemoryBuffer:
             current_pos = current_pose[:3]
             memory_poses = torch.stack(self.poses).to(device)
             spatial_dists = torch.norm(memory_poses[:, :3] - current_pos, dim=1)
-            spatial_similarities = torch.exp(-spatial_dists / config['retrieval_spatial_radius'])  # 使用检索专用半径
+            spatial_similarities = torch.exp(-spatial_dists / self.SCORING_CONFIG['retrieval_spatial_radius'])  # 使用检索专用半径
             
             # 4. 使用频率加权（经验因素）
             usage_scores = torch.tensor(self.usage_counts, device=device, dtype=torch.float)
             usage_weights = torch.log(usage_scores + 1) / 5.0  # 对数缩放，避免过度偏向
             
             # 综合检索评分：使用检索专用权重
+            config = self.SCORING_CONFIG
             retrieval_scores = (config['retrieval_action_weight'] * action_similarities + 
                                config['retrieval_memory_weight'] * norm_scores + 
                                config['retrieval_spatial_weight'] * spatial_similarities +
@@ -254,34 +265,64 @@ class MemoryBuffer:
     
     def update_usage_scores(self, used_indices: List[int], current_frame_idx: int):
         """
-        更新使用过的记忆分数，实现动态评分调整
+        动态衰减系统：实现固定记忆时间 + 加速衰减机制
+        
+        设计逻辑：
+        1. 固定记忆时间tx=3步：前3步完全不衰减
+        2. 第4步开始衰减：衰减速度随未使用步数递增
+        3. 使用时分数提升并重置衰减冷却期
         
         Args:
             used_indices: 本次推理中使用的记忆索引列表
             current_frame_idx: 当前帧索引
         """
         config = self.SCORING_CONFIG
+        fixed_memory_time = config['fixed_memory_time']      # tx = 3步固定记忆时间
+        base_decay = config['base_decay_rate']               # 基础衰减率
+        accel_decay = config['accelerated_decay_rate']       # 加速衰减率a
         
-        # 提升使用过的记忆分数
+        # 1. 提升使用过的记忆分数并重置衰减冷却
         for idx in used_indices:
             if 0 <= idx < len(self.scores):
+                # 分数提升
                 self.scores[idx] = min(
                     self.scores[idx] + config['usage_boost'],
                     config['max_score']
                 )
                 self.usage_counts[idx] += 1
                 self.last_used[idx] = current_frame_idx
+                # 关键：重置衰减冷却期，重新享受3步保护
+                self.unused_steps[idx] = 0
         
-        # 对未使用的记忆进行衰减
+        # 2. 对未使用的记忆应用动态衰减系统
         for i in range(len(self.scores)):
             if i not in used_indices:
-                frames_since_use = current_frame_idx - self.last_used[i]
-                # 基于时间的衰减
-                decay = config['decay_rate'] * min(frames_since_use / 100.0, 1.0)
+                # 增加连续未使用步数
+                self.unused_steps[i] += 1
+                
+                # 固定记忆时间保护：前tx步完全不衰减
+                if self.unused_steps[i] <= fixed_memory_time:
+                    continue  # 跳过衰减，享受保护期
+                
+                # 开始动态衰减：第4步及以后
+                excess_steps = self.unused_steps[i] - fixed_memory_time  # 超出保护期的步数
+                
+                # 加速衰减公式：衰减率随未使用步数递增
+                # decay = base_decay * (accel_decay ^ excess_steps)
+                # 这样第4步衰减较慢，但越往后衰减越快
+                dynamic_decay_rate = base_decay * (accel_decay ** excess_steps)
+                
+                # 应用衰减
                 self.scores[i] = max(
-                    self.scores[i] - decay,
+                    self.scores[i] - dynamic_decay_rate,
                     config['min_survival_score']
                 )
+                
+                # 调试信息：可以在需要时启用
+                # print(f"Memory {i}: unused_steps={self.unused_steps[i]}, "
+                #       f"excess_steps={excess_steps}, dynamic_decay={dynamic_decay_rate:.2f}, "
+                #       f"new_score={self.scores[i]:.2f}")
+    
     
     def should_store_frame(self, pose: torch.Tensor, action: torch.Tensor = None, 
                           frame_idx: int = 0, min_distance: float = 5.0) -> bool:
@@ -408,6 +449,11 @@ class MemoryBuffer:
         if len(self.frames) == 0:
             return {"empty": True}
         
+        # 分析动态衰减系统状态
+        protected_memories = sum(1 for steps in self.unused_steps if steps <= self.SCORING_CONFIG['fixed_memory_time'])
+        decaying_memories = sum(1 for steps in self.unused_steps if steps > self.SCORING_CONFIG['fixed_memory_time'])
+        avg_unused_steps = sum(self.unused_steps) / len(self.unused_steps) if self.unused_steps else 0
+        
         return {
             "total_memories": len(self.frames),
             "max_capacity": self.max_size,
@@ -416,6 +462,13 @@ class MemoryBuffer:
             "lowest_score": min(self.scores),
             "total_usage": sum(self.usage_counts),
             "most_used_count": max(self.usage_counts) if self.usage_counts else 0,
+            # 动态衰减系统统计
+            "protected_memories": protected_memories,      # 享受保护期的记忆数
+            "decaying_memories": decaying_memories,        # 正在衰减的记忆数
+            "avg_unused_steps": avg_unused_steps,          # 平均连续未使用步数
+            "max_unused_steps": max(self.unused_steps) if self.unused_steps else 0,
+            "fixed_memory_time": self.SCORING_CONFIG['fixed_memory_time'],
+            "accelerated_decay_rate": self.SCORING_CONFIG['accelerated_decay_rate'],
             "scoring_config": self.SCORING_CONFIG
         }
     
@@ -428,6 +481,7 @@ class MemoryBuffer:
         self.scores.clear()
         self.usage_counts.clear()
         self.last_used.clear()
+        self.unused_steps.clear()  # 重置连续未使用步数
     
 
 class SelectiveMemoryAttention(nn.Module):

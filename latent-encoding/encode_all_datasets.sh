@@ -28,7 +28,7 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "Encoding tartan_drive dataset..."
-python encode_latents.py -i data/tartan -o latents/tartan_drive --vae-model $VAE_MODEL --batch-size $BATCH_SIZE
+python encode_latents.py -i data/tartan_drive -o latents/tartan_drive --vae-model $VAE_MODEL --batch-size $BATCH_SIZE
 if [ $? -ne 0 ]; then
     echo "ERROR: Failed to encode tartan_drive dataset"
     exit 1
