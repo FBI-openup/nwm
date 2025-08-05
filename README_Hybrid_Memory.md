@@ -27,57 +27,71 @@ from models import TimestepEmbedder, ActionEmbedder, modulate, FinalLayer
 4. **独立测试**: 可以独立测试CDiT和HybridCDiT的区别
 
 ### 设计哲学
-- **存储严格，检索灵活**：用严格标准筛选值得保存的关键帧，用灵活标准匹配相关记忆
+- **保留最佳，检索灵活**：保留评分最高的40帧，用灵活标准匹配相关记忆
 - **行为导向**：重点关注动作行为的相似性，而非简单的空间距离
 - **动态衰减**：实现记忆的自然遗忘和重要性调整
+- **自适应优化**：第二阶段新增零参数自适应检索权重系统
 - **模块化复用**：充分利用 `models.py` 中已验证的核心组件
 
-## 双标准记忆系统
+## 双标准记忆系统 (第一阶段实现 + 第二阶段自适应优化)
 
-### 1. 存储标准（严格筛选）
+### 1. 存储标准（智能筛选最高分40帧）
 
-存储系统负责筛选真正有价值的关键帧，采用100分制评分系统。
+存储系统采用100分制评分系统，始终保留评分最高的40帧。**无存储阈值限制**，所有帧都参与评分，系统自动淘汰低分帧。
 
-#### 评分参数配置（与代码中 SCORING_CONFIG 一致）
+#### 第一阶段评分重点：转弯行为 + 空间独特性
 
-**动作价值评估:**
-- **急转弯地标** (+50.0分): `storage_sharp_turn_weight` - 导航中的重要节点
-- **重要转弯** (+35.0分): `storage_turn_weight` - 次要导航节点  
-- **复杂机动** (+15.0分): `storage_complex_maneuver` - 困难路段记忆
+**转弯行为检测 (核心特征):**
+- **急转弯地标** (+50.0分): `storage_sharp_turn_weight` - 导航中的重要节点 (≥26°)
+- **重要转弯** (+35.0分): `storage_turn_weight` - 次要导航节点 (≥14°)
+- **复杂机动** (+15.0分): `storage_complex_maneuver` - 转弯同时前进的困难路段
 - **平凡动作** (-8.0分): `storage_trivial_penalty` - 降低普通直行的价值
 
-**空间独特性:**
-- **新区域探索** (+30.0分): `storage_spatial_weight` - 距离现有记忆足够远的位置
-- **位置太近** (-12.0分): `storage_close_penalty` - 重复区域的价值降低
+**空间独特性检测:**
+- **新区域探索** (+最多60.0分): `storage_spatial_weight` - 距离现有记忆足够远的位置 (≥4米)
+- **位置重复** (-12.0分): `storage_close_penalty` - 重复区域的价值降低 (<4米)
 - **第一帧奖励** (+40.0分): `storage_first_frame_bonus` - 起点的特殊重要性
-
-**视角多样性:**
-- **独特视角** (+25.0分): `storage_angle_weight` - 不同朝向的关键视角
-- **相似视角** (-5.0分): `storage_similar_angle_penalty` - 降低重复视角的价值
-
-**环境特征:**
-- **高度优势** (+20.0分): `storage_height_weight` - 高位置的观察价值
-
-**存储约束条件:**
-- **最小空间间距**: 4.0米 (`storage_min_distance`)
-- **最小角度差异**: 1.2弧度 (~69°) (`storage_min_angle_diff`)
-- **存储阈值**: 6.0分 (`min_score_threshold`) - 只有超过此阈值的帧才会被存储
+**存储策略:**
 - **最大容量**: 40帧 (`max_size`)
+- **存储策略**: 保留评分最高的40帧，无阈值限制
+- **替换机制**: 当缓存满时，新帧与最低分帧竞争，高分者胜出
 
-**行为分类阈值:**
+**行为分类阈值 (第一阶段重点):**
 - **重要转弯**: 0.25弧度 (~14°) (`significant_turn_threshold`)
 - **急转弯**: 0.45弧度 (~26°) (`sharp_turn_threshold`)  
 - **线性运动**: 0.2米 (`linear_motion_threshold`)
 
-### 2. 检索标准（灵活匹配）
+**第一阶段设计优势:**
+- ✅ **简化评分**: 重点关注转弯行为和空间独特性
+- ✅ **无阈值限制**: 所有帧都有机会进入记忆，避免错失重要帧
+- ✅ **动态竞争**: 始终保持最高质量的40帧记忆
+- ✅ **实现简单**: 降低复杂度，便于调试和优化
+
+### 2. 检索标准（灵活匹配 + 第二阶段自适应优化）
 
 检索系统负责找到对当前推理最有帮助的记忆，采用多因素加权评分。
 
-#### 权重分配（代码中的实际权重）
-- **动作相似性** (50%): `retrieval_action_weight` - 主要因素，寻找相似的行为模式
-- **记忆价值** (25%): `retrieval_memory_weight` - 重要因素，高质量记忆优先
-- **空间相关性** (15%): `retrieval_spatial_weight` - 辅助因素，考虑地理位置
-- **使用经验** (10%): `retrieval_usage_weight` - 经验因素，频繁使用的记忆
+#### 第二阶段新增：零参数自适应权重系统
+
+**核心理念**：根据当前情况的复杂度，动态调整检索权重，无需训练参数。
+
+**自适应逻辑**：
+- **静止/慢速** (线性速度 < 0.1): 
+  - 动作权重 ↓ (0.3) - 动作不明显
+  - 空间权重 ↑ (0.4) - 依赖位置信息
+- **快速移动** (线性速度 > 0.4):
+  - 动作权重 ↑ (0.6) - 动作很重要  
+  - 空间权重 ↓ (0.1) - 位置变化大，空间意义降低
+- **大转弯** (转弯角度 > 0.3):
+  - 动作权重 ↑↑ (最高0.7) - 转弯行为是关键信息
+
+**复杂度触发阈值**：只有复杂度 > 0.3 时才启用自适应权重，简单情况使用默认权重。
+
+#### 权重分配（默认 + 自适应）
+- **动作相似性**: 默认50% → 自适应30-70% - 主要因素，根据情况动态调整
+- **记忆价值**: 默认25% → 自适应20% - 重要因素，基本保持稳定
+- **空间相关性**: 默认15% → 自适应5-40% - 辅助因素，根据移动速度调整
+- **使用经验**: 默认10% → 自适应10% - 经验因素，保持稳定
 
 **检索参数:**
 - **空间匹配半径**: 10.0米 (`retrieval_spatial_radius`)
@@ -163,34 +177,37 @@ self.unused_steps[idx] = 0  # 重置衰减冷却期
 - **GPU优化**: 高效的张量操作和内存复用
 - **批处理支持**: 支持批量推理的记忆管理
 
-## 配置参数说明
+## 配置参数说明 (第一阶段实现 + 第二阶段自适应优化)
 
-所有关键参数都在 `SCORING_CONFIG` 中集中管理，与代码实现完全一致：
+所有关键参数都在 `SCORING_CONFIG` 中集中管理，第二阶段新增零参数自适应系统：
 
-### 存储标准参数（严格筛选关键帧）
+### 存储标准参数（第一阶段：转弯和空间重点）
 ```python
-# hybrid_models.py 中的实际配置
+# hybrid_models.py 中的第一阶段配置
 'storage_turn_weight': 35.0,           # 存储：转弯动作重要性
 'storage_sharp_turn_weight': 50.0,     # 存储：急转弯额外加权  
 'storage_spatial_weight': 30.0,        # 存储：空间独特性权重
-'storage_angle_weight': 25.0,          # 存储：角度多样性权重
-'storage_height_weight': 20.0,         # 存储：高度优势权重
 'storage_complex_maneuver': 15.0,      # 存储：复杂机动加分
 'storage_trivial_penalty': -8.0,       # 存储：平凡动作扣分
 'storage_close_penalty': -12.0,        # 存储：位置太近扣分
-'storage_similar_angle_penalty': -5.0, # 存储：相似视角扣分
 'storage_first_frame_bonus': 40.0,     # 存储：第一帧起点奖励
 'storage_min_distance': 4.0,           # 存储：最小空间间距要求(米)
-'storage_min_angle_diff': 1.2,         # 存储：最小角度差异要求(弧度)
 ```
 
-### 检索标准参数（灵活匹配相关记忆）
+### 检索标准参数（第二阶段：自适应 + 默认权重）
 ```python
+# 默认权重 (简单情况使用)
 'retrieval_action_weight': 0.50,       # 检索：动作相似性权重 (主要)
 'retrieval_memory_weight': 0.25,       # 检索：记忆价值权重 (重要)
 'retrieval_spatial_weight': 0.15,      # 检索：空间相关性权重 (辅助)
 'retrieval_usage_weight': 0.10,        # 检索：使用经验权重 (经验)
 'retrieval_spatial_radius': 10.0,      # 检索：空间匹配半径(米)
+
+# 第二阶段：零参数自适应权重 (复杂情况自动启用)
+# 静止/慢速: action=0.3, spatial=0.4, memory=0.2, usage=0.1
+# 快速移动: action=0.6, spatial=0.1, memory=0.2, usage=0.1  
+# 大转弯: action=0.7(最高), spatial=0.05(最低), memory=0.2, usage=0.1
+# 复杂度阈值: 0.3 (超过此值启用自适应权重)
 ```
 
 ### 动态衰减系统参数
@@ -210,11 +227,11 @@ self.unused_steps[idx] = 0  # 重置衰减冷却期
 'linear_motion_threshold': 0.2,        # 线性运动阈值(米)
 ```
 
-### 缓存管理参数
+### 缓存管理参数 (第一阶段简化)
 ```python
 # MemoryBuffer 初始化参数
 max_size: int = 40,                     # 最大缓存容量
-min_score_threshold: float = 6.0        # 最小存储阈值 (0.3 * 20 = 6.0)
+# 注意：第一阶段移除了 min_score_threshold，保留最高分40帧
 ```
 
 ### 模型架构参数
@@ -249,10 +266,10 @@ if memory_layers is None:
 # 确保 models.py 在相同目录
 from hybrid_models import HybridCDiT_L_2
 
-# 创建混合模型
+# 创建混合模型 (第一阶段)
 model = HybridCDiT_L_2(
     memory_enabled=True, 
-    memory_buffer_size=40,  # 与 SCORING_CONFIG 中的 max_size 对应
+    memory_buffer_size=40,  # 固定保留40帧最高分记忆
     memory_layers=list(range(12, 24))  # L模型的后半层
 )
 
@@ -272,6 +289,13 @@ print(f"记忆容量: {stats['total_memories']}/{stats['max_capacity']}")
 print(f"平均分数: {stats['average_score']:.2f}")
 print(f"保护期记忆: {stats['protected_memories']}")
 print(f"衰减期记忆: {stats['decaying_memories']}")
+
+# 第二阶段新增：获取自适应评分统计
+adaptive_stats = model.memory_buffer.get_adaptive_scoring_stats(poses[0], actions[0])
+print(f"复杂度评分: {adaptive_stats['complexity_score']:.3f}")
+print(f"使用自适应权重: {adaptive_stats['use_adaptive']}")
+if adaptive_stats['use_adaptive']:
+    print("权重调整:", adaptive_stats['weight_differences'])
 ```
 
 ### 纯CDiT模式（兼容性测试）
@@ -284,17 +308,17 @@ model_cdit = HybridCDiT_L_2(memory_enabled=False)
 output = model_cdit(x, t, y, x_cond, rel_t)
 ```
 
-### 记忆系统配置调优
+### 记忆系统配置调优 (第一阶段)
 
 ```python
 # 创建模型后动态调整评分参数
 model = HybridCDiT_L_2(memory_enabled=True)
 
-# 调整存储策略 - 更严格筛选
+# 调整存储策略 - 更重视转弯行为
 model.memory_buffer.SCORING_CONFIG.update({
     'storage_turn_weight': 40.0,        # 提高转弯重要性
+    'storage_sharp_turn_weight': 60.0,  # 大幅提高急转弯重要性
     'storage_trivial_penalty': -12.0,   # 更严格惩罚平凡动作
-    'min_score_threshold': 8.0          # 提高存储阈值
 })
 
 # 调整检索策略 - 更注重行为相似性  
@@ -310,7 +334,7 @@ model.memory_buffer.SCORING_CONFIG.update({
 })
 ```
 
-### 记忆系统监控
+### 记忆系统监控 (第二阶段增强)
 
 ```python
 # 推理过程中实时监控记忆状态
@@ -323,6 +347,15 @@ for step, (x, t, y, x_cond, rel_t, pose) in enumerate(dataloader):
         print(f"  记忆使用率: {stats['total_memories']}/{stats['max_capacity']}")
         print(f"  平均未使用步数: {stats['avg_unused_steps']:.1f}")
         print(f"  最高/最低分数: {stats['highest_score']:.1f}/{stats['lowest_score']:.1f}")
+        
+        # 第二阶段新增：监控自适应评分系统
+        if y is not None and pose is not None:
+            adaptive_stats = model.memory_buffer.get_adaptive_scoring_stats(pose[0], y[0])
+            print(f"  复杂度评分: {adaptive_stats['complexity_score']:.3f}")
+            print(f"  自适应权重: {'启用' if adaptive_stats['use_adaptive'] else '默认'}")
+            if adaptive_stats['use_adaptive']:
+                weight_diff = adaptive_stats['weight_differences']
+                print(f"  权重调整: 动作{weight_diff['action']:+.2f} 空间{weight_diff['spatial']:+.2f}")
         
         # 检查记忆系统健康度
         if stats['avg_unused_steps'] > 10:
@@ -409,15 +442,15 @@ model = HybridCDiT_L_2(memory_enabled=True)
 output = model(x, t, y, x_cond, rel_t, pose, update_memory=True)
 ```
 
-## 调优建议
+## 调优建议 (第一阶段)
 
-### 提高存储选择性
+### 强化转弯行为检测
 ```python
-# 更严格的存储策略
+# 更重视转弯行为的存储策略
 model.memory_buffer.SCORING_CONFIG.update({
-    'min_score_threshold': 8.0,         # 提高存储阈值
-    'storage_turn_weight': 40.0,        # 增加关键动作权重
-    'storage_trivial_penalty': -12.0,   # 增加惩罚项权重
+    'storage_turn_weight': 45.0,        # 大幅增加转弯权重
+    'storage_sharp_turn_weight': 70.0,  # 极大增加急转弯权重
+    'storage_trivial_penalty': -15.0,   # 更严厉惩罚平凡动作
     'storage_close_penalty': -15.0      # 更严格的空间去重
 })
 ```
@@ -473,16 +506,39 @@ if hasattr(model, 'memory_buffer'):
 
 ## 未来扩展
 
-1. **学习化参数**: 将固定评分参数改为可学习参数
-2. **多层次记忆**: 短期/中期/长期记忆分层管理
-3. **语义记忆**: 结合视觉特征的语义相似性
-4. **协作记忆**: 多智能体间的记忆共享机制
-5. **自适应阈值**: 根据环境动态调整存储和检索阈值
+### 🎯 第三阶段扩展方向 (基于前两阶段成功经验)
+
+1. **视角多样性检测**: 添加角度差异评分，避免相似视角的重复存储
+2. **高度优势识别**: 加入高度因素，重视观察点和制高点
+3. **时间间隔过滤**: 避免连续相似帧，提高时间多样性
+4. **动态阈值调整**: 基于缓存使用率自动调整评分权重
+
+### 🔬 第四阶段深度优化 (需权衡GPU开销)
+
+5. **轻量级学习化参数**: 仅关键权重可学习（<1MB额外开销）
+6. **语义记忆**: 结合视觉特征的语义相似性
+7. **多层次记忆**: 短期/中期/长期记忆分层管理
+8. **协作记忆**: 多智能体间的记忆共享机制
+
+### 📋 实施优先级 (基于前两阶段验证)
+
+- **✅ 已完成**: 第一阶段 - 转弯行为 + 空间独特性
+- **✅ 已完成**: 第二阶段 - 零参数自适应检索权重系统 
+- **短期实施**: 第三阶段 - 视角多样性 + 高度优势  
+- **长期考虑**: 第四阶段 - 深度学习化参数（仅在证明ROI后）
+
+### 🎯 第二阶段成果验证
+
+- ✅ **零参数实现**: 无需训练，动态调整检索权重
+- ✅ **智能触发**: 仅在复杂情况下启用，简单情况保持高效
+- ✅ **实时监控**: 提供详细的自适应权重统计信息
+- ✅ **GPU友好**: 计算开销极小，主要是简单的if-else逻辑
+- ✅ **不影响存储**: 仅优化检索逻辑，存储策略保持稳定
 
 ---
 
 *最后更新: 2025年8月5日*  
-*版本: 混合记忆系统 v2.0*  
+*版本: 混合记忆系统 v2.2 (第一阶段 + 第二阶段自适应优化)*  
 *依赖: models.py (核心组件提供)*
         
         # 维护缓冲区大小
