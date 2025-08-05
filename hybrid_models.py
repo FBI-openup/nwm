@@ -37,29 +37,30 @@ class ZeroParameterAdaptiveScoring:
         linear_magnitude = torch.norm(action[:2]).item()
         
         if linear_magnitude < 0.1:  # 静止/慢速移动
-            action_weight = 0.3      # 降低动作权重，因为动作不明显
-            spatial_weight = 0.4     # 提高空间权重，依赖位置信息
-            memory_weight = 0.2      # 中等记忆权重
-            usage_weight = 0.1       # 低使用权重
+            action_weight = 0.2      # 降低动作权重，因为动作不明显
+            spatial_weight = 0.6     # 大幅提高空间权重，依赖位置信息
+            memory_weight = 0.15     # 适中记忆权重
+            usage_weight = 0.05      # 低使用权重
         elif linear_magnitude > 0.4:  # 快速移动
-            action_weight = 0.6      # 大幅提高动作权重，动作很重要
-            spatial_weight = 0.1     # 降低空间权重，快速移动时位置变化大
-            memory_weight = 0.2      # 中等记忆权重
-            usage_weight = 0.1       # 低使用权重
+            action_weight = 0.45     # 适度提高动作权重，但不超过空间权重
+            spatial_weight = 0.35    # 保持空间权重为主导
+            memory_weight = 0.15     # 适中记忆权重
+            usage_weight = 0.05      # 低使用权重
         else:  # 中等速度 (0.1 <= magnitude <= 0.4)
-            action_weight = 0.5      # 平衡权重
-            spatial_weight = 0.2     # 适中空间权重
-            memory_weight = 0.2      # 适中记忆权重
-            usage_weight = 0.1       # 低使用权重
+            action_weight = 0.35     # 平衡权重，但空间优先
+            spatial_weight = 0.45    # 空间权重仍为主导
+            memory_weight = 0.15     # 适中记忆权重
+            usage_weight = 0.05      # 低使用权重
             
         # 2. 基于转弯幅度的权重进一步调整
         turn_magnitude = abs(action[2]).item()
         
         if turn_magnitude > 0.3:  # 大转弯 (约17°以上)
-            action_weight = min(action_weight + 0.1, 0.7)  # 进一步提高动作权重，上限0.7
-            spatial_weight = max(spatial_weight - 0.05, 0.05)  # 轻微降低空间权重，下限0.05
+            action_weight = min(action_weight + 0.15, 0.6)  # 适度提高动作权重，但不超过空间
+            spatial_weight = max(spatial_weight - 0.1, 0.25)  # 轻微降低空间权重，但保持显著地位
         elif turn_magnitude > 0.15:  # 中等转弯
-            action_weight = min(action_weight + 0.05, 0.65)  # 轻微提高动作权重
+            action_weight = min(action_weight + 0.08, 0.5)  # 轻微提高动作权重
+            spatial_weight = max(spatial_weight - 0.05, 0.3)  # 轻微降低空间权重
             
         # 3. 确保权重和为1.0
         total_weight = action_weight + spatial_weight + memory_weight + usage_weight
@@ -124,10 +125,10 @@ class MemoryBuffer:
             'storage_min_distance': 4.0,         # 存储：最小空间间距要求
             
             # === 检索标准参数 (灵活匹配相关记忆) ===
-            'retrieval_action_weight': 0.50,     # 检索：动作相似性权重 (主要)
-            'retrieval_memory_weight': 0.25,     # 检索：记忆价值权重 (重要)
-            'retrieval_spatial_weight': 0.15,    # 检索：空间相关性权重 (辅助)
-            'retrieval_usage_weight': 0.10,      # 检索：使用经验权重 (经验)
+            'retrieval_action_weight': 0.35,     # 检索：动作相似性权重 (重要)
+            'retrieval_memory_weight': 0.20,     # 检索：记忆价值权重 (重要)
+            'retrieval_spatial_weight': 0.40,    # 检索：空间相关性权重 (主要) - 提高到主导地位
+            'retrieval_usage_weight': 0.05,      # 检索：使用经验权重 (辅助)
             'retrieval_spatial_radius': 10.0,    # 检索：空间匹配半径
             
             # === 动态衰减系统参数 ===

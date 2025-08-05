@@ -77,21 +77,22 @@ from models import TimestepEmbedder, ActionEmbedder, modulate, FinalLayer
 
 **自适应逻辑**：
 - **静止/慢速** (线性速度 < 0.1): 
-  - 动作权重 ↓ (0.3) - 动作不明显
-  - 空间权重 ↑ (0.4) - 依赖位置信息
+  - 动作权重 ↓ (0.2) - 动作不明显
+  - 空间权重 ↑↑ (0.6) - 主要依赖位置信息
 - **快速移动** (线性速度 > 0.4):
-  - 动作权重 ↑ (0.6) - 动作很重要  
-  - 空间权重 ↓ (0.1) - 位置变化大，空间意义降低
+  - 动作权重 ↑ (0.45) - 动作重要，但不超过空间
+  - 空间权重 ↑ (0.35) - 空间仍然是主导因素
 - **大转弯** (转弯角度 > 0.3):
-  - 动作权重 ↑↑ (最高0.7) - 转弯行为是关键信息
+  - 动作权重 ↑ (最高0.6) - 转弯行为重要
+  - 空间权重保持 (最低0.25) - 空间信息依然关键
 
 **复杂度触发阈值**：只有复杂度 > 0.3 时才启用自适应权重，简单情况使用默认权重。
 
 #### 权重分配（默认 + 自适应）
-- **动作相似性**: 默认50% → 自适应30-70% - 主要因素，根据情况动态调整
-- **记忆价值**: 默认25% → 自适应20% - 重要因素，基本保持稳定
-- **空间相关性**: 默认15% → 自适应5-40% - 辅助因素，根据移动速度调整
-- **使用经验**: 默认10% → 自适应10% - 经验因素，保持稳定
+- **空间相关性**: 默认40% → 自适应25-60% - **主要因素**，空间位置对记忆最重要
+- **动作相似性**: 默认35% → 自适应20-60% - 重要因素，根据情况动态调整
+- **记忆价值**: 默认20% → 自适应15% - 重要因素，基本保持稳定
+- **使用经验**: 默认5% → 自适应5% - 辅助因素，保持稳定
 
 **检索参数:**
 - **空间匹配半径**: 10.0米 (`retrieval_spatial_radius`)
@@ -197,16 +198,16 @@ self.unused_steps[idx] = 0  # 重置衰减冷却期
 ### 检索标准参数（第二阶段：自适应 + 默认权重）
 ```python
 # 默认权重 (简单情况使用)
-'retrieval_action_weight': 0.50,       # 检索：动作相似性权重 (主要)
-'retrieval_memory_weight': 0.25,       # 检索：记忆价值权重 (重要)
-'retrieval_spatial_weight': 0.15,      # 检索：空间相关性权重 (辅助)
-'retrieval_usage_weight': 0.10,        # 检索：使用经验权重 (经验)
+'retrieval_action_weight': 0.35,       # 检索：动作相似性权重 (重要)
+'retrieval_memory_weight': 0.20,       # 检索：记忆价值权重 (重要)
+'retrieval_spatial_weight': 0.40,      # 检索：空间相关性权重 (主要) - 空间位置最重要
+'retrieval_usage_weight': 0.05,        # 检索：使用经验权重 (辅助)
 'retrieval_spatial_radius': 10.0,      # 检索：空间匹配半径(米)
 
 # 第二阶段：零参数自适应权重 (复杂情况自动启用)
-# 静止/慢速: action=0.3, spatial=0.4, memory=0.2, usage=0.1
-# 快速移动: action=0.6, spatial=0.1, memory=0.2, usage=0.1  
-# 大转弯: action=0.7(最高), spatial=0.05(最低), memory=0.2, usage=0.1
+# 静止/慢速: action=0.2, spatial=0.6(主导), memory=0.15, usage=0.05
+# 快速移动: action=0.45, spatial=0.35(仍为主导), memory=0.15, usage=0.05  
+# 大转弯: action=0.6(最高), spatial=0.25(最低但仍重要), memory=0.15, usage=0.05
 # 复杂度阈值: 0.3 (超过此值启用自适应权重)
 ```
 
@@ -321,10 +322,12 @@ model.memory_buffer.SCORING_CONFIG.update({
     'storage_trivial_penalty': -12.0,   # 更严格惩罚平凡动作
 })
 
-# 调整检索策略 - 更注重行为相似性  
+# 调整检索策略 - 更注重空间相似性  
 model.memory_buffer.SCORING_CONFIG.update({
-    'retrieval_action_weight': 0.60,    # 增强动作相似性权重
-    'retrieval_spatial_weight': 0.10,   # 降低空间权重
+    'retrieval_spatial_weight': 0.45,   # 增强空间相似性权重 (主导)
+    'retrieval_action_weight': 0.30,    # 降低动作权重但仍重要
+    'retrieval_memory_weight': 0.20,    # 适中记忆权重
+    'retrieval_usage_weight': 0.05,     # 降低使用权重
 })
 
 # 调整衰减策略 - 更长保护期
@@ -457,11 +460,13 @@ model.memory_buffer.SCORING_CONFIG.update({
 
 ### 提高检索准确性  
 ```python
-# 优化检索权重分配
+# 优化检索权重分配 - 空间优先策略
 model.memory_buffer.SCORING_CONFIG.update({
-    'retrieval_action_weight': 0.60,    # 增强行为相似性
-    'retrieval_memory_weight': 0.20,    # 降低记忆价值影响
-    'retrieval_spatial_radius': 8.0,    # 缩小空间半径
+    'retrieval_spatial_weight': 0.50,   # 大幅增强空间相似性权重
+    'retrieval_action_weight': 0.30,    # 适中动作相似性权重
+    'retrieval_memory_weight': 0.15,    # 降低记忆价值影响
+    'retrieval_usage_weight': 0.05,     # 最小化使用经验权重
+    'retrieval_spatial_radius': 8.0,    # 缩小空间半径提高精度
 })
 ```
 
