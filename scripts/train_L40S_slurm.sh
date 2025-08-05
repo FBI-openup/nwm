@@ -31,10 +31,21 @@ echo "🔧 Setting up environment..."
 
 # Load conda environment
 echo "📦 Loading conda environment..."
-source ~/miniconda3/etc/profile.d/conda.sh || { 
-    echo "❌ Failed to load conda.sh"; 
-    exit 1; 
-}
+# Try multiple common conda locations
+if [ -f "${HOME}/miniconda3/etc/profile.d/conda.sh" ]; then
+    source "${HOME}/miniconda3/etc/profile.d/conda.sh"
+elif [ -f "${HOME}/anaconda3/etc/profile.d/conda.sh" ]; then
+    source "${HOME}/anaconda3/etc/profile.d/conda.sh"
+elif [ -f "/opt/conda/etc/profile.d/conda.sh" ]; then
+    source "/opt/conda/etc/profile.d/conda.sh"
+elif command -v conda &> /dev/null; then
+    # If conda is already in PATH, try to use it directly
+    echo "✅ Conda found in PATH"
+else
+    echo "❌ Could not find conda installation"
+    echo "💡 Please ensure conda is installed and accessible"
+    exit 1
+fi
 
 echo "🐍 Activating nwm-env conda environment..."
 conda activate nwm-env || { 
@@ -45,11 +56,16 @@ conda activate nwm-env || {
 
 # Change to project directory
 echo "📂 Changing to project directory..."
-cd ${HOME}/boyuan/nwm || { 
-    echo "❌ Directory not found: ${HOME}/boyuan/nwm"; 
-    echo "💡 Please update the path to your NWM repository"; 
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+# Go to the parent directory (nwm root)
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_DIR" || { 
+    echo "❌ Failed to change to project directory: $PROJECT_DIR"; 
+    echo "💡 Please ensure this script is in the scripts/ subdirectory of your NWM repository"; 
     exit 1; 
 }
+echo "✅ Working in project directory: $(pwd)"
 
 # Create log directories if they don't exist
 mkdir -p logs/slurm_outputs
