@@ -22,12 +22,11 @@ import tempfile
 import logging
 from datetime import datetime
 
-# Configure logging
+# Configure logging (only to console, no log file)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('worldmem_setup.log'),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -411,7 +410,6 @@ class WorldMemSetup:
         
         self.print_banner("SETUP COMPLETE", Colors.OKGREEN)
         print(f"{Colors.OKGREEN}🚀 WorldMem is ready to use!{Colors.ENDC}")
-        print(f"{Colors.OKCYAN}📝 Setup log saved to: worldmem_setup.log{Colors.ENDC}")
         return True
 
 
