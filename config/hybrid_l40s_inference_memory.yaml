@@ -1,9 +1,9 @@
-# L40S GPU training configuration - Hybrid memory model
-# Training without buffer, memory mechanism enabled during inference
-run_name: hybrid_l40s_inference_memory
+# L40S GPU training configuration - Hybrid CDiT with WorldMem integration
+# Training hybrid model with memory mechanisms for navigation world modeling
+run_name: hybrid_nwm_cdit_l_latents_L40S
 
 # output
-results_dir: logs_L40S_hybrid_latents
+results_dir: logs/nwm_cdit_xl
 
 # training switches
 train: True
@@ -19,12 +19,14 @@ eval_decode: false
 batch_size: 16           # Updated to match L40S latent config
 num_workers: 16          # Updated to match L40S latent config
 
-# hybrid model configuration
+# hybrid model configuration - WorldMem integration
 model: CDiT-L/2          
 use_hybrid_model: true
-memory_enabled: true     # Enable during inference
-memory_buffer_size: 50
-memory_layers: [0, 6, 12, 18]  # Activate memory at these layers
+memory_enabled: true     # Enable memory during training and inference
+memory_buffer_size: 100  # Increased buffer size for better memory capacity
+memory_layers: [0, 6, 12, 18, 24]  # Extended memory layers for L/2 model
+memory_update_frequency: 50  # Update memory every N steps during training
+adaptive_memory_weights: true  # Enable adaptive memory weight adjustment
 
 # model & optimization
 lr: 2e-5                 # Updated to match L40S latent config
@@ -77,9 +79,23 @@ datasets:
 pin_memory: true
 persistent_workers: true
 
-# memory weight configuration (used only during inference)
-spatial_weight: 0.8  # Spatial similarity weight
-action_weight: 0.2   # Action similarity weight
+# Advanced memory weight configuration with adaptive scoring
+retrieval_weights:
+  spatial_weight: 0.45        # Base spatial similarity weight
+  action_weight: 0.35         # Base action similarity weight  
+  memory_weight: 0.15         # Memory usage pattern weight
+  usage_weight: 0.05          # Access frequency weight
+
+# Zero-parameter adaptive scoring system
+adaptive_scoring:
+  enabled: true
+  complexity_threshold: 0.4   # Use adaptive weights when complexity > threshold
+  linear_speed_thresholds:
+    slow: 0.1                 # Below this: increase spatial weight
+    fast: 0.4                 # Above this: increase action weight
+  turn_thresholds:
+    minor: 0.15               # Below 8.5 degrees
+    major: 0.3                # Above 17 degrees
 
 # behavior classification thresholds
 behavior_thresholds:

@@ -54,6 +54,7 @@ cd ${HOME}/boyuan/nwm || {
 # Create log directories if they don't exist
 mkdir -p logs/slurm_outputs
 mkdir -p logs/nwm_cdit_xl/checkpoints
+mkdir -p logs/nwm_cdit_xl/hybrid_logs  # Additional logs for hybrid model
 
 # =============================================================================
 # Pre-training Checks
@@ -61,11 +62,14 @@ mkdir -p logs/nwm_cdit_xl/checkpoints
 echo "🔍 Running pre-training checks..."
 
 # Check if config file exists
-CONFIG_FILE="config/hybrid_nwm_cdit_l_latents_L40S.yaml"
+CONFIG_FILE="config/hybrid_l40s_inference_memory.yaml"
 if [ ! -f "$CONFIG_FILE" ]; then
-    echo "⚠️  Config file not found: $CONFIG_FILE"
+    echo "❌ Config file not found: $CONFIG_FILE"
     echo "📋 Available config files:"
     ls -la config/*.yaml
+    exit 1
+else
+    echo "✅ Using hybrid config: $CONFIG_FILE"
 fi
 
 # Check GPU availability
@@ -107,14 +111,16 @@ echo "└── Output logs: logs/slurm_outputs/"
 echo "🚀 Starting Hybrid CDiT model training..."
 echo "⏰ Training started at: $(date)"
 
-# Main training command
+# Main training command - Hybrid CDiT with WorldMem
 python train.py --config "$CONFIG_FILE" \
     --device cuda \
     --ckpt-every 2000 \
     --eval-every 10000 \
     --bfloat16 1 \
     --epochs 300 \
-    --torch-compile 0
+    --torch-compile 0 \
+    --hybrid-mode \
+    --memory-enabled
 
 # Capture training exit code
 TRAINING_EXIT_CODE=$?
