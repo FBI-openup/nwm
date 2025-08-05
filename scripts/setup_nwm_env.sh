@@ -24,10 +24,20 @@ set -e
 echo "Step 1: Create new conda environment (nwm-env, Python 3.10)"
 mamba create -y -n nwm-env python=3.10
 
-echo "Step 2: Activate the environment"
+echo "Step 2: Initialize conda/mamba shell environment and activate"
+# Initialize conda shell
 source "$(conda info --base)/etc/profile.d/conda.sh"
-eval "$(mamba shell hook --shell bash)"
-mamba activate nwm-env
+eval "$(conda shell.bash hook)"
+
+# Initialize mamba shell if available
+if command -v mamba &> /dev/null; then
+    eval "$(mamba shell hook --shell bash)"
+    echo "✅ Mamba environment initialized"
+fi
+
+# Activate the environment
+echo "🐍 Activating nwm-env environment..."
+mamba activate nwm-env || conda activate nwm-env
 
 echo "Step 3: Install PyTorch, torchvision, torchaudio with CUDA 12.1 using pip (stable versions)"
 pip3 install pyyaml typeguard
@@ -48,12 +58,26 @@ pip3 install decord diffusers tqdm timm torcheval lpips notebook dreamsim ipywid
 echo "Step 8: Install additional conda libraries" ffmpegfor video processing
 conda install -c conda-forge ffmpeg
 
-echo "Step 9: make you bashrc eval every time to use (de)activate "
-mamba shell init --shell bash --root-prefix=~/.local/share/mamba
+echo "Step 9: Configure shell for future use"
+# Initialize shell hooks for future sessions
+if command -v mamba &> /dev/null; then
+    mamba shell init --shell bash --root-prefix=~/.local/share/mamba
+    echo "✅ Mamba shell initialized for future sessions"
+fi
 
-echo "✅ Environment 'nwm-env' setup complete. You can now activate it in new bash using:"
-echo "   mamba activate nwm-env"
-eval "$(mamba shell hook --shell bash)"
-mamba activate nwm-env
+echo "Step 10: Finalize environment setup"
+eval "$(conda shell.bash hook)"
+if command -v mamba &> /dev/null; then
+    eval "$(mamba shell hook --shell bash)"
+    mamba activate nwm-env
+else
+    conda activate nwm-env
+fi
+
+echo "✅ Environment 'nwm-env' setup complete!"
+echo "🔥 Environment is now active and ready to use."
+echo ""
+echo "💡 For future sessions, activate the environment with:"
+echo "   mamba activate nwm-env  (or conda activate nwm-env)"
 
 

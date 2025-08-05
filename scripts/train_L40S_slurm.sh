@@ -47,6 +47,16 @@ else
     exit 1
 fi
 
+# Initialize conda/mamba shell environment
+echo "🔄 Initializing conda shell environment..."
+eval "$(conda shell.bash hook)" || {
+    echo "⚠️  Failed to initialize conda shell hook, trying manual initialization..."
+    # Fallback: try to initialize mamba if available
+    if command -v mamba &> /dev/null; then
+        eval "$(mamba shell.bash hook)"
+    fi
+}
+
 echo "🐍 Activating nwm-env conda environment..."
 conda activate nwm-env || { 
     echo "❌ Failed to activate conda environment 'nwm-env'"; 
