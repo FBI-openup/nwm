@@ -8,7 +8,7 @@
 # NoMaD, GNM, ViNT: https://github.com/robodhruv/visualnav-transformer
 # --------------------------------------------------------
 
-from isolated_nwm_infer import model_forward_wrapper
+from scripts.isolated_nwm_infer import model_forward_wrapper
 import torch
 # the first flag below was False when we tested this script but True makes A100 training a lot faster:
 torch.backends.cuda.matmul.allow_tf32 = True

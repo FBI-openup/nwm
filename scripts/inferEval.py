@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Author: Boyuan Zhang
-
-This script automates the full evaluation pipeline for NWM models:
+Author: Boyuan Zha# ======================= Step 2: Prediction generation ========================
+for eval_type in ["time", "rollout"]:
+    cmd = [
+        "python", "-m", "scripts.isolated_nwm_infer",This script automates the full evaluation pipeline for NWM models:
     1. Generate Ground Truth images
     2. Generate predicted images using pretrained models
     3. Run LPIPS / DreamSim / FID evaluation and output scores
@@ -70,7 +71,7 @@ if not os.path.exists(args.exp_config):
 # ======================= Step 1: GT generation ========================
 for eval_type in ["time", "rollout"]:
     cmd = [
-        "python", "isolated_nwm_infer.py",
+        "python", "-m", "scripts.isolated_nwm_infer",
         "--output_dir", gt_dir,
         "--exp", exp_name,
         "--ckp", args.ckpt,
@@ -89,7 +90,7 @@ for eval_type in ["time", "rollout"]:
 # ======================= Step 2: Prediction generation ========================
 for eval_type in ["time", "rollout"]:
     cmd = [
-        "python", "isolated_nwm_infer.py",
+        "python", "scripts/isolated_nwm_infer.py",
         "--output_dir", pred_dir,
         "--exp", exp_name,
         "--ckp", args.ckpt,
@@ -107,7 +108,7 @@ for eval_type in ["time", "rollout"]:
 
 # ======================= Step 3: Run Evaluation ========================
 eval_cmd = [
-    "python", "isolated_nwm_eval.py",
+    "python", "-m", "scripts.isolated_nwm_eval",
     "--datasets", args.datasets,
     "--gt_dir", gt_exp_dir,
     "--exp_dir", pred_exp_dir,

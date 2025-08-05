@@ -29,8 +29,9 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 eval "$(mamba shell hook --shell bash)"
 mamba activate nwm-env
 
-echo "Step 3: Install PyTorch, torchvision, torchaudio with CUDA 12.6 using pip"
-pip3 install pyyaml typeguard --pre torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/nightly/cu126
+echo "Step 3: Install PyTorch, torchvision, torchaudio with CUDA 12.1 using pip (stable versions)"
+pip3 install pyyaml typeguard
+pip3 install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121
 
 echo "Step 4: Install core scientific libraries using pip"
 pip3 install numpy scipy pandas matplotlib scikit-learn 
