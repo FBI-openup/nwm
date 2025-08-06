@@ -4,13 +4,16 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 #from distributed import init_distributed
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import torch
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
 import yaml
 import argparse
-import os
 import numpy as np
 
 from diffusion import create_diffusion
@@ -125,7 +128,7 @@ def visualize_preds(output_dir, idxs, sec, x_pred_pixels):
 
 @torch.no_grad
 def main(args):
-    _, _, device, _ = init_distributed()
+    _, _, device, _ = dist.init_distributed()
     print(args)
     device = torch.device(device)
     num_tasks = dist.get_world_size()

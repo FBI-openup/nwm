@@ -25,6 +25,10 @@ import evo.main_ape as main_ape
 import evo.main_rpe as main_rpe
 from evo.core.metrics import PoseRelation
 
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from diffusion import create_diffusion
 from datasets import TrajectoryEvalDataset
 from scripts.isolated_nwm_infer import model_forward_wrapper
