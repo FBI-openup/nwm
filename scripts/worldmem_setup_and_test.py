@@ -49,52 +49,52 @@ class Colors:
 class WorldMemSetup:
     """Main class for WorldMem installation and testing"""
     
-    def __init__(self, workspace_path: str = None):
-        """Initialize the setup with workspace path detection"""
-        if workspace_path is None:
-            self.workspace_path = self._detect_workspace()
+    def __init__(self, nwm_root_path: Optional[str] = None):
+        """Initialize the setup with nwm root path detection"""
+        if nwm_root_path is None:
+            self.nwm_path = self._detect_nwm_root()
         else:
-            self.workspace_path = Path(workspace_path)
+            self.nwm_path = Path(nwm_root_path)
         
-        self.mine_nwm_path = self.workspace_path / "Mine" / "nwm"
-        self.simon_nwm_path = self.workspace_path / "Simon" / "nwm"
-        self.worldmem_path = self.mine_nwm_path / "WorldMem"
+        self.worldmem_path = self.nwm_path / "WorldMem"
         
-        logger.info(f"Workspace detected at: {self.workspace_path}")
-        logger.info(f"Mine NWM path: {self.mine_nwm_path}")
+        logger.info(f"NWM root detected at: {self.nwm_path}")
         logger.info(f"WorldMem path: {self.worldmem_path}")
 
-    def _detect_workspace(self) -> Path:
-        """Auto-detect the workspace path"""
+    def _detect_nwm_root(self) -> Path:
+        """Auto-detect the nwm root directory"""
         current = Path.cwd()
+        
+        # Check if we're already in the nwm directory or a subdirectory
         while current != current.parent:
-            if (current / "Mine" / "nwm").exists() and (current / "Simon" / "nwm").exists():
+            if (current / "WorldMem").exists() and (current / "config").exists() and (current / "scripts").exists():
                 return current
             current = current.parent
         
-        # Fallback to common patterns
-        possible_paths = [
-            Path.home() / "VScode workspace",
-            Path("/home/zhangboyuan/VScode workspace"),
-            Path.cwd()
-        ]
+        # Fallback: check if we're in a subdirectory of nwm
+        current = Path.cwd()
+        while current != current.parent:
+            # Look for nwm directory structure
+            if current.name == "nwm" and (current / "WorldMem").exists():
+                return current
+            current = current.parent
         
-        for path in possible_paths:
-            if path.exists() and (path / "Mine" / "nwm").exists():
-                return path
+        # Last resort: use current working directory if it contains expected files
+        if (Path.cwd() / "WorldMem").exists() or (Path.cwd() / "config").exists():
+            return Path.cwd()
         
-        raise FileNotFoundError("Could not detect workspace with Mine/nwm and Simon/nwm directories")
+        raise FileNotFoundError("Could not detect nwm root directory. Please run from within the nwm project.")
 
     def print_banner(self, text: str, color: str = Colors.HEADER):
         """Print a styled banner"""
         banner = f"\n{'='*60}\n{text:^60}\n{'='*60}\n"
         print(f"{color}{banner}{Colors.ENDC}")
 
-    def run_command(self, cmd: List[str], cwd: Path = None, capture_output: bool = True) -> Tuple[bool, str]:
+    def run_command(self, cmd: List[str], cwd: Optional[Path] = None, capture_output: bool = True) -> Tuple[bool, str]:
         """Run a shell command and return success status and output"""
         try:
             if cwd is None:
-                cwd = self.workspace_path
+                cwd = self.nwm_path
             
             logger.info(f"Running command: {' '.join(cmd)} in {cwd}")
             
@@ -276,12 +276,12 @@ class WorldMemSetup:
         
         try:
             # Add paths to sys.path
-            nwm_path = str(self.mine_nwm_path)
+            nwm_path = str(self.nwm_path)
             if nwm_path not in sys.path:
                 sys.path.insert(0, nwm_path)
             
             # Test memory configuration loading
-            memory_config_path = self.mine_nwm_path / "config" / "memory_config.yaml"
+            memory_config_path = self.nwm_path / "config" / "memory_config.yaml"
             if memory_config_path.exists():
                 print(f"{Colors.OKGREEN}✓ Memory configuration file found{Colors.ENDC}")
                 

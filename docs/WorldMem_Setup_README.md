@@ -31,7 +31,7 @@ This comprehensive Python script provides automated installation, configuration,
 ### Quick Start
 ```bash
 # Navigate to your workspace directory
-cd "/home/zhangboyuan/VScode workspace"
+cd "path/to/your/nwm"
 
 # Run the setup and test script
 python worldmem_setup_and_test.py
@@ -40,7 +40,7 @@ python worldmem_setup_and_test.py
 ### Custom Workspace Path
 ```bash
 # If your workspace is in a different location
-python worldmem_setup_and_test.py --workspace /path/to/your/workspace
+python scripts/worldmem_setup_and_test.py --nwm-root /path/to/your/nwm
 ```
 
 ## What the Script Does
@@ -84,20 +84,19 @@ python worldmem_setup_and_test.py --workspace /path/to/your/workspace
 
 ## Directory Structure Expected
 
-The script expects this workspace structure:
+The script expects this nwm project structure:
 ```
-VScode workspace/
-├── Mine/
-│   └── nwm/
-│       ├── WorldMem/              # Main WorldMem directory
-│       │   ├── requirements.txt   # Python dependencies
-│       │   ├── algorithms/        # Core algorithms
-│       │   ├── main.py           # Main training script
-│       │   └── app.py            # Gradio app
-│       └── config/
-│           └── memory_config.yaml # Memory configuration
-└── Simon/
-    └── nwm/                       # Alternative NWM setup
+nwm/                               # NWM project root
+├── WorldMem/                      # Main WorldMem directory
+│   ├── requirements.txt           # Python dependencies
+│   ├── algorithms/                # Core algorithms
+│   ├── main.py                   # Main training script
+│   └── app.py                    # Gradio app
+├── config/
+│   └── memory_config.yaml        # Memory configuration
+├── scripts/                      # Scripts directory
+│   └── worldmem_setup_and_test.py # Setup script
+└── data/                         # Data directory
 ```
 
 ## Dependencies Installed
@@ -175,11 +174,11 @@ setup.test_gpu_availability()
 
 ### Common Issues
 
-**1. Workspace Not Found**
+**1. NWM Root Directory Not Found**
 ```
-Error: Could not detect workspace with Mine/nwm and Simon/nwm directories
+Error: Could not detect nwm root directory. Please run from within the nwm project.
 ```
-**Solution**: Ensure you're running from the correct directory or specify the workspace path.
+**Solution**: Ensure you're running from within the nwm project directory or any of its subdirectories.
 
 **2. Conda Environment Issues**
 ```
@@ -230,7 +229,7 @@ bash infer.sh
 ### 4. Use in Python Scripts
 ```python
 import sys
-sys.path.append('/path/to/WorldMem')
+sys.path.append('/path/to/nwm/WorldMem')
 
 from algorithms.worldmem import WorldMemMinecraft
 model = WorldMemMinecraft()
