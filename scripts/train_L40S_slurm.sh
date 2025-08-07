@@ -12,8 +12,6 @@
 # =============================================================================
 # Description: Training script for Navigation World Models with Hybrid CDiT
 # Target: ENSTA L40S cluster with GPU support
-# Author: NWM Team
-# Date: August 2025
 # =============================================================================
 
 echo "🚀 =============================================="

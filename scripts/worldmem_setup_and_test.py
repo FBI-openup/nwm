@@ -5,9 +5,6 @@ WorldMem Installation and Test Suite
 
 This script provides comprehensive installation and testing for WorldMem components
 including dependency management, environment setup, and functional testing.
-
-Author: Navigation World Models Team
-Date: July 2025
 """
 
 # pylint: disable=import-error

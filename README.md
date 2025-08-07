@@ -118,11 +118,11 @@ nwm/
 │   ├── train.py                    # Main training script for NWM CDiT models
 │   ├── models.py                   # CDiT model implementations (Transformer architectures)
 │   ├── hybrid_models.py            # Hybrid CDiT with integrated memory system
-│   ├── datasets.py                 # Dataset loading, preprocessing, and data pipeline
-│   ├── latent_dataset.py           # Latent dataset handling for faster training
+│   ├── datasets.py                 # Legacy dataset handling (used by evaluation scripts)
+│   ├── latent_dataset.py           # Current dataset pipeline - latent-based training
 │   ├── distributed.py              # Distributed training utilities and synchronization
 │   ├── misc.py                     # Utility functions (transforms, metrics, helpers)
-│   └── submitit_train_cw.py        # SLURM cluster training submission script
+│   └── submitit_train_cw.py        # SLURM cluster training script (requires: pip install submitit)
 │
 ├── Evaluation & Inference Scripts
 │   ├── scripts/
@@ -180,6 +180,27 @@ nwm/
     └── docs/                       # Detailed documentation guides
 ```
 
+### Data Processing Pipeline Evolution
+
+**Current Pipeline (Recommended):**
+- 🚀 **`latent_dataset.py`**: Main dataset handler for training
+  - Uses pre-encoded VAE latents (`.pt` files) for faster training
+  - Implemented in `LatentTrainingDataset` and `LatentEvalDataset`
+  - Significant performance improvement over raw image processing
+
+**Legacy Pipeline (Evaluation Only):**
+- 📁 **`datasets.py`**: Legacy dataset handling
+  - Still used by evaluation scripts: `isolated_nwm_infer.py`, `planning_eval.py`
+  - Processes raw images on-the-fly (slower but needed for specific evaluations)
+  - Classes: `EvalDataset`, `TrajectoryEvalDataset`
+
+**Pipeline Workflow:**
+1. **Data Encoding**: Use `scripts/encode_latents.py` to pre-process datasets
+2. **Training**: `train.py` automatically uses `latent_dataset.py`
+3. **Evaluation**: Some scripts still require `datasets.py` for compatibility
+
+> **Note**: Both files are maintained for compatibility. The training pipeline has fully migrated to latent-based processing, while evaluation scripts may still require the legacy image processing pipeline.
+
 ### Key File Categories
 
 **Core Training Files**
@@ -203,12 +224,16 @@ nwm/
 - `worldmem_setup_and_test.py`: Automated installation and testing for all components
 - `setup_nwm_env.sh`: Base environment setup script
 - `requirements-eval.txt`: Optional heavy dependencies for trajectory evaluation (evo library)
+- `submitit_train_cw.py`: Optional SLURM cluster training (requires: `pip install submitit`)
 
 ### Usage Workflow
 
 1. **Setup**: Use `setup_nwm_env.sh` and `worldmem_setup_and_test.py`
 2. **Data Prep**: Use `encode_latents.py` for faster training (optional)
-3. **Training**: Run `train.py` with appropriate config files
+3. **Training Options**:
+   - **Single GPU**: `python train.py` (recommended for development)
+   - **Multi-GPU (single node)**: `torchrun` with `train.py` (most common)
+   - **Multi-node cluster**: `submitit_train_cw.py` (requires `pip install submitit`)
 4. **Evaluation**: Use `inferEval.py` for images or `planning_eval.py` for trajectories
 5. **Interactive**: Explore with `interactive_model.ipynb` or WorldMem's `app.py`
 
@@ -306,9 +331,17 @@ torchrun \
 ```
 
 Or using submitit and slurm (8 machines of 8 gpus):
+
+**⚠️ Prerequisites**: This requires the `submitit` library for SLURM job management:
+```bash
+pip install submitit
+```
+
 ```bash
 python submitit_train_cw.py --nodes 8 --partition <partition_name> --qos <qos> --config config/nwm_cdit_xl.yaml --ckpt-every 2000 --eval-every 10000 --bfloat16 1 --epochs 300  --torch-compile 0
 ```
+
+> **Note**: The `submitit` library is only needed for SLURM cluster training. For single GPU or local multi-GPU training, use the torchrun method above or single GPU training below.
 
 #### Single GPU Training
 

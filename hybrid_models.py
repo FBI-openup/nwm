@@ -17,52 +17,52 @@ from models import TimestepEmbedder, ActionEmbedder, modulate, FinalLayer
 
 class ZeroParameterAdaptiveScoring:
     """
-    零参数的自适应评分系统 (第二阶段优化)
-    动态调整检索权重，不影响存储逻辑，无需训练
+    Zero-parameter adaptive scoring system (Stage 2 optimization)
+    Dynamically adjust retrieval weights, does not affect storage logic, no training required
     """
     
     def compute_adaptive_weights(self, current_situation):
         """
-        基于当前情况动态调整检索权重，无需训练
+        Dynamically adjust retrieval weights based on current situation, no training required
         
         Args:
-            current_situation: dict包含 {'action': tensor, 'pose': tensor}
+            current_situation: dict containing {'action': tensor, 'pose': tensor}
             
         Returns:
-            dict: 自适应调整后的检索权重
+            dict: Adaptively adjusted retrieval weights
         """
         action = current_situation['action']
         
-        # 1. 基于线性运动幅度的权重调整
+        # 1. Weight adjustment based on linear motion magnitude
         linear_magnitude = torch.norm(action[:2]).item()
         
-        if linear_magnitude < 0.1:  # 静止/慢速移动
-            action_weight = 0.2      # 降低动作权重，因为动作不明显
-            spatial_weight = 0.6     # 大幅提高空间权重，依赖位置信息
-            memory_weight = 0.15     # 适中记忆权重
-            usage_weight = 0.05      # 低使用权重
-        elif linear_magnitude > 0.4:  # 快速移动
-            action_weight = 0.45     # 适度提高动作权重，但不超过空间权重
-            spatial_weight = 0.35    # 保持空间权重为主导
-            memory_weight = 0.15     # 适中记忆权重
-            usage_weight = 0.05      # 低使用权重
-        else:  # 中等速度 (0.1 <= magnitude <= 0.4)
-            action_weight = 0.35     # 平衡权重，但空间优先
-            spatial_weight = 0.45    # 空间权重仍为主导
-            memory_weight = 0.15     # 适中记忆权重
-            usage_weight = 0.05      # 低使用权重
+        if linear_magnitude < 0.1:  # Stationary/slow movement
+            action_weight = 0.2      # Reduce action weight, as action is not obvious
+            spatial_weight = 0.6     # Significantly increase spatial weight, rely on position info
+            memory_weight = 0.15     # Moderate memory weight
+            usage_weight = 0.05      # Low usage weight
+        elif linear_magnitude > 0.4:  # Fast movement
+            action_weight = 0.45     # Moderately increase action weight, but not exceeding spatial
+            spatial_weight = 0.35    # Keep spatial weight as dominant
+            memory_weight = 0.15     # Moderate memory weight
+            usage_weight = 0.05      # Low usage weight
+        else:  # Medium speed (0.1 <= magnitude <= 0.4)
+            action_weight = 0.35     # Balanced weight, but spatial priority
+            spatial_weight = 0.45    # Spatial weight still dominant
+            memory_weight = 0.15     # Moderate memory weight
+            usage_weight = 0.05      # Low usage weight
             
-        # 2. 基于转弯幅度的权重进一步调整
+        # 2. Further adjustment based on turn magnitude
         turn_magnitude = abs(action[2]).item()
         
-        if turn_magnitude > 0.3:  # 大转弯 (约17°以上)
-            action_weight = min(action_weight + 0.15, 0.6)  # 适度提高动作权重，但不超过空间
-            spatial_weight = max(spatial_weight - 0.1, 0.25)  # 轻微降低空间权重，但保持显著地位
-        elif turn_magnitude > 0.15:  # 中等转弯
-            action_weight = min(action_weight + 0.08, 0.5)  # 轻微提高动作权重
-            spatial_weight = max(spatial_weight - 0.05, 0.3)  # 轻微降低空间权重
+        if turn_magnitude > 0.3:  # Large turn (above ~17°)
+            action_weight = min(action_weight + 0.15, 0.6)  # Moderately increase action weight, but not exceeding spatial
+            spatial_weight = max(spatial_weight - 0.1, 0.25)  # Slightly reduce spatial weight, but maintain significant position
+        elif turn_magnitude > 0.15:  # Medium turn
+            action_weight = min(action_weight + 0.08, 0.5)  # Slightly increase action weight
+            spatial_weight = max(spatial_weight - 0.05, 0.3)  # Slightly reduce spatial weight
             
-        # 3. 确保权重和为1.0
+        # 3. Ensure weights sum to 1.0
         total_weight = action_weight + spatial_weight + memory_weight + usage_weight
         action_weight /= total_weight
         spatial_weight /= total_weight
@@ -78,29 +78,29 @@ class ZeroParameterAdaptiveScoring:
     
     def compute_situation_complexity(self, current_situation):
         """
-        计算当前情况的复杂度，用于决定是否使用自适应权重
+        Compute complexity of current situation to decide whether to use adaptive weights
         
         Returns:
-            float: 复杂度分数 (0-1)，越高越复杂，越需要自适应调整
+            float: Complexity score (0-1), higher means more complex, more need for adaptive adjustment
         """
         action = current_situation['action']
         
         linear_magnitude = torch.norm(action[:2]).item()
         turn_magnitude = abs(action[2]).item()
         
-        # 复杂度评分：极慢、极快、大转弯都被认为是复杂情况
+        # Complexity scoring: very slow, very fast, large turns are considered complex situations
         complexity = 0.0
         
-        # 线性运动复杂度
-        if linear_magnitude < 0.05:  # 极慢
+        # Linear motion complexity
+        if linear_magnitude < 0.05:  # Very slow
             complexity += 0.3
-        elif linear_magnitude > 0.5:  # 极快
+        elif linear_magnitude > 0.5:  # Very fast
             complexity += 0.4
         
-        # 转弯复杂度
-        if turn_magnitude > 0.4:  # 大转弯
+        # Turn complexity
+        if turn_magnitude > 0.4:  # Large turn
             complexity += 0.5
-        elif turn_magnitude > 0.2:  # 中等转弯
+        elif turn_magnitude > 0.2:  # Medium turn
             complexity += 0.3
             
         return min(complexity, 1.0)
@@ -108,64 +108,70 @@ class ZeroParameterAdaptiveScoring:
 
 class MemoryBuffer:
     """
-    智能记忆缓存系统，基于打分机制存储和检索关键帧
-    支持动态评分调整和多因素综合评估
+    Smart memory cache system based on scoring mechanism for storing and retrieving key frames
+    Supports dynamic scoring adjustment and multi-factor comprehensive evaluation
     """
     def __init__(self, max_size: int = 40):
-        # === 可配置评分参数 (第一阶段：基于转弯和空间的简化评分) ===
+        # === Configurable scoring parameters (Stage 1: simplified scoring based on turns and space) ===
         self.SCORING_CONFIG = {
-            # === 存储标准参数 (第一阶段：重点关注转弯行为) ===
-            'storage_turn_weight': 35.0,         # 存储：转弯动作重要性
-            'storage_sharp_turn_weight': 50.0,   # 存储：急转弯额外加权  
-            'storage_spatial_weight': 30.0,      # 存储：空间独特性权重
-            'storage_complex_maneuver': 15.0,    # 存储：复杂机动加分
-            'storage_trivial_penalty': -8.0,     # 存储：平凡动作扣分
-            'storage_close_penalty': -12.0,      # 存储：位置太近扣分
-            'storage_first_frame_bonus': 40.0,   # 存储：第一帧起点奖励
-            'storage_min_distance': 4.0,         # 存储：最小空间间距要求
+            # === Storage standard parameters (Stage 1: focus on turning behavior) ===
+            'storage_turn_weight': 35.0,         # Storage: turning action importance
+            'storage_sharp_turn_weight': 50.0,   # Storage: sharp turn extra weighting
+            'storage_spatial_weight': 30.0,      # Storage: spatial uniqueness weight
+            'storage_complex_maneuver': 15.0,    # Storage: complex maneuver bonus
+            'storage_trivial_penalty': -8.0,     # Storage: trivial action penalty
+            'storage_close_penalty': -12.0,      # Storage: position too close penalty
+            'storage_first_frame_bonus': 40.0,   # Storage: first frame starting point bonus
+            'storage_min_distance': 4.0,         # Storage: minimum spatial distance requirement
             
-            # === 检索标准参数 (灵活匹配相关记忆) ===
-            'retrieval_action_weight': 0.35,     # 检索：动作相似性权重 (重要)
-            'retrieval_memory_weight': 0.20,     # 检索：记忆价值权重 (重要)
-            'retrieval_spatial_weight': 0.40,    # 检索：空间相关性权重 (主要) - 提高到主导地位
-            'retrieval_usage_weight': 0.05,      # 检索：使用经验权重 (辅助)
-            'retrieval_spatial_radius': 10.0,    # 检索：空间匹配半径
+            # === Retrieval standard parameters (flexible matching of relevant memories) ===
+            'retrieval_action_weight': 0.35,     # Retrieval: action similarity weight (important)
+            'retrieval_memory_weight': 0.20,     # Retrieval: memory value weight (important)
+            'retrieval_spatial_weight': 0.40,    # Retrieval: spatial relevance weight (primary) - elevated to dominant position
+            'retrieval_usage_weight': 0.05,      # Retrieval: usage experience weight (auxiliary)
+            'retrieval_spatial_radius': 10.0,    # Retrieval: spatial matching radius
             
-            # === 动态衰减系统参数 ===
-            'usage_boost': 5.0,                  # 每次使用的分数提升
-            'fixed_memory_time': 3,               # 固定记忆时间tx：前3步不衰减
-            'base_decay_rate': 1.2,               # 基础衰减率
-            'accelerated_decay_rate': 1.4,        # 加速衰减率a：衰减速度递增系数
-            'max_score': 100.0,                  # 最高分数上限
-            'min_survival_score': 3.0,           # 保留的最低分数
+            # === Dynamic decay system parameters ===
+            'usage_boost': 5.0,                  # Score boost per usage
+            'fixed_memory_time': 3,               # Fixed memory time tx: no decay for first 3 steps
+            'base_decay_rate': 1.2,               # Base decay rate
+            'accelerated_decay_rate': 1.4,        # Accelerated decay rate a: decay speed increment coefficient
+            'max_score': 100.0,                  # Maximum score limit
+            'min_survival_score': 3.0,           # Minimum retention score
             
-            # === 行为分类阈值 (第一阶段：重要转弯和急转弯) ===
-            'significant_turn_threshold': 0.25,  # 重要转弯阈值 (~14°)
-            'sharp_turn_threshold': 0.45,        # 急转弯阈值 (~26°)
-            'linear_motion_threshold': 0.2,      # 线性运动阈值
+            # === Behavior classification thresholds (Stage 1: significant turns and sharp turns) ===
+            'significant_turn_threshold': 0.25,  # Significant turn threshold (~14°)
+            'sharp_turn_threshold': 0.45,        # Sharp turn threshold (~26°)
+            'linear_motion_threshold': 0.2,      # Linear motion threshold
+            
+            # === Normalized thresholds (for potential future use) ===
+            'norm_significant_turn_threshold': 0.15,  # Normalized significant turn threshold
+            'norm_sharp_turn_threshold': 0.3,         # Normalized sharp turn threshold
+            'norm_linear_motion_threshold': 0.1,      # Normalized linear motion threshold
         }
         
         self.max_size = max_size
         
-        # 第二阶段优化：零参数自适应评分系统
+        # Stage 2 optimization: zero-parameter adaptive scoring system
         self.adaptive_scorer = ZeroParameterAdaptiveScoring()
         
-        # 存储结构
+        # Storage structure
         self.frames = []
         self.poses = []
         self.actions = []
         self.frame_indices = []
-        self.scores = []           # 每个记忆的当前分数 (0-100分)
-        self.usage_counts = []     # 使用次数统计
-        self.last_used = []        # 最后使用时间
-        self.unused_steps = []     # 连续未使用步数（动态衰减关键指标）
+        self.scores = []           # Current score for each memory (0-100 points)
+        self.usage_counts = []     # Usage count statistics
+        self.last_used = []        # Last usage time
+        self.unused_steps = []     # Consecutive unused steps (key metric for dynamic decay)
+        self.current_frame_idx = 0 # Current frame index for decay calculations
         
     def add_frame(self, frame_latent: torch.Tensor, pose: torch.Tensor, action: torch.Tensor = None, frame_idx: int = 0):
-        """智能添加帧到记忆缓存，始终保留评分最高的40帧"""
-        # 计算新帧的存储价值分数
+        """Intelligently add frame to memory cache, always retain the highest-scored 40 frames"""
+        # Calculate new frame's storage value score
         storage_score = self.compute_storage_score(pose, action, frame_idx)
         
-        # 如果缓存未满，直接添加
+        # If cache is not full, add directly
         if len(self.frames) < self.max_size:
             self.frames.append(frame_latent.detach())
             self.poses.append(pose.detach())
@@ -177,14 +183,14 @@ class MemoryBuffer:
             self.scores.append(storage_score)
             self.usage_counts.append(0)
             self.last_used.append(frame_idx)
-            self.unused_steps.append(0)  # 新记忆初始化为0步未使用
+            self.unused_steps.append(0)  # Initialize new memory with 0 unused steps
             return True
         
-        # 缓存已满，需要替换最低分的记忆
+        # Cache is full, need to replace the lowest-scoring memory
         min_score_idx = self.scores.index(min(self.scores))
         min_score = self.scores[min_score_idx]
         
-        # 如果新帧分数更高，替换掉最低分的记忆
+        # If new frame score is higher, replace the lowest-scoring memory
         if storage_score > min_score:
             self.frames[min_score_idx] = frame_latent.detach()
             self.poses[min_score_idx] = pose.detach()
@@ -196,138 +202,138 @@ class MemoryBuffer:
             self.scores[min_score_idx] = storage_score
             self.usage_counts[min_score_idx] = 0
             self.last_used[min_score_idx] = frame_idx
-            self.unused_steps[min_score_idx] = 0  # 新记忆重置未使用步数
+            self.unused_steps[min_score_idx] = 0  # Reset new memory unused steps
             return True
         
         return False
     
     def compute_storage_score(self, pose: torch.Tensor, action: torch.Tensor = None, frame_idx: int = 0) -> float:
         """
-        计算帧的存储价值评分 (第一阶段：基于转弯和空间的简化评分)
-        重点关注：转弯行为检测 + 空间独特性
+        Calculate frame storage value score (Stage 1: simplified scoring based on turns and space)
+        Focus: turning behavior detection + spatial uniqueness
         
         Args:
-            pose: 当前位置 [x, y, z, yaw]
-            action: 当前动作 [delta_x, delta_y, delta_yaw] (归一化)
-            frame_idx: 帧索引
+            pose: Current position [x, y, z, yaw]
+            action: Current action [delta_x, delta_y, delta_yaw] (normalized)
+            frame_idx: Frame index
             
         Returns:
-            float: 存储价值评分 (0-100分)
+            float: Storage value score (0-100 points)
         """
         score = 0.0
         config = self.SCORING_CONFIG
         
-        # 1. 转弯行为检测 (第一阶段重点：关键动作识别)
+        # 1. Turning behavior detection (Stage 1 focus: key action recognition)
         if action is not None:
             turn_magnitude = torch.abs(action[2]).item()  # |delta_yaw|
             linear_magnitude = torch.norm(action[:2]).item()
             
-            # 急转弯动作 - 重要的导航节点
+            # Sharp turn action - important navigation nodes
             if turn_magnitude >= config['sharp_turn_threshold']:
-                score += config['storage_sharp_turn_weight']  # +50分: 急转弯地标
+                score += config['storage_sharp_turn_weight']  # +50 points: sharp turn landmarks
             elif turn_magnitude >= config['significant_turn_threshold']:
-                score += config['storage_turn_weight']  # +35分: 重要转弯
+                score += config['storage_turn_weight']  # +35 points: significant turns
             
-            # 复杂机动 - 转弯同时前进
+            # Complex maneuver - turning while moving forward
             if turn_magnitude >= 0.15 and linear_magnitude >= config['linear_motion_threshold']:
-                score += config['storage_complex_maneuver']  # +15分: 复杂机动
+                score += config['storage_complex_maneuver']  # +15 points: complex maneuvers
             
-            # 平凡直行动作减分
+            # Trivial straight-line action penalty
             if turn_magnitude < 0.1 and linear_magnitude < 0.15:
-                score += config['storage_trivial_penalty']  # -8分: 平凡动作
+                score += config['storage_trivial_penalty']  # -8 points: trivial actions
         
-        # 2. 空间独特性检测 (第一阶段重点：避免重复位置)
+        # 2. Spatial uniqueness detection (Stage 1 focus: avoid repeated positions)
         if len(self.poses) > 0:
             current_pos = pose[:3]
             stored_poses = torch.stack(self.poses)
             distances = torch.norm(stored_poses[:, :3] - current_pos, dim=1)
             min_distance = torch.min(distances).item()
             
-            # 新区域探索加分
+            # New area exploration bonus
             if min_distance >= config['storage_min_distance']:
-                # 距离越远，存储价值越高
+                # Greater distance, higher storage value
                 distance_score = config['storage_spatial_weight'] * min(min_distance / 8.0, 2.0)
-                score += distance_score  # 最多+60分: 新区域
+                score += distance_score  # Up to +60 points: new areas
             else:
-                # 距离太近减分
-                score += config['storage_close_penalty']  # -12分: 重复位置
+                # Too close distance penalty
+                score += config['storage_close_penalty']  # -12 points: repeated positions
         else:
-            # 第一帧起点奖励
-            score += config['storage_first_frame_bonus']  # +40分: 重要起点
+            # First frame starting point bonus
+            score += config['storage_first_frame_bonus']  # +40 points: important starting point
         
-        # 限制分数范围
+        # Limit score range
         final_score = min(max(score, 0.0), config['max_score'])
         return final_score
     
     def compute_retrieval_score(self, current_pose: torch.Tensor, target_action: torch.Tensor = None) -> torch.Tensor:
         """
-        计算检索相关性评分，决定哪些记忆对当前推理最有帮助
-        第二阶段优化：使用零参数自适应权重系统
+        Calculate retrieval relevance scores to determine which memories are most helpful for current inference
+        Stage 2 optimization: use zero-parameter adaptive weight system
         
         Args:
-            current_pose: 当前位置
-            target_action: 目标动作 (当前要执行的动作)
+            current_pose: Current position
+            target_action: Target action (action to be executed currently)
             
         Returns:
-            torch.Tensor: 每个记忆的检索相关性分数
+            torch.Tensor: Retrieval relevance score for each memory
         """
         if len(self.frames) == 0:
             return torch.tensor([])
         
         device = current_pose.device
         
-        # 核心策略：相似的动作应该产生相似的变化
+        # Core strategy: similar actions should produce similar changes
         if target_action is not None:
-            # 第二阶段优化：计算自适应权重
+            # Stage 2 optimization: compute adaptive weights
             current_situation = {
                 'action': target_action.to(device),
                 'pose': current_pose.to(device)
             }
             complexity = self.adaptive_scorer.compute_situation_complexity(current_situation)
             
-            # 如果情况复杂度高，使用自适应权重；否则使用默认权重
-            if complexity > 0.3:  # 复杂情况阈值
+            # If situation complexity is high, use adaptive weights; otherwise use default weights
+            if complexity > 0.3:  # Complex situation threshold
                 adaptive_weights = self.adaptive_scorer.compute_adaptive_weights(current_situation)
                 action_weight = adaptive_weights['retrieval_action_weight']
                 memory_weight = adaptive_weights['retrieval_memory_weight']
                 spatial_weight = adaptive_weights['retrieval_spatial_weight']
                 usage_weight = adaptive_weights['retrieval_usage_weight']
             else:
-                # 使用默认权重
+                # Use default weights
                 config = self.SCORING_CONFIG
                 action_weight = config['retrieval_action_weight']
                 memory_weight = config['retrieval_memory_weight']
                 spatial_weight = config['retrieval_spatial_weight']
                 usage_weight = config['retrieval_usage_weight']
             
-            # 1. 动作行为相似性（检索主要因素）
+            # 1. Action behavioral similarity (primary retrieval factor)
             memory_actions = torch.stack(self.actions).to(device)
             action_similarities = self._compute_action_similarity_for_retrieval(
                 target_action.to(device), memory_actions
             )
             
-            # 2. 记忆存储价值加权（次要因素）
+            # 2. Memory storage value weighting (secondary factor)
             memory_scores = torch.tensor(self.scores, device=device)
-            # 归一化分数到[0,1]
+            # Normalize scores to [0,1]
             norm_scores = memory_scores / self.SCORING_CONFIG['max_score']
             
-            # 3. 空间上下文相关性（辅助因素）
+            # 3. Spatial context relevance (auxiliary factor)
             current_pos = current_pose[:3]
             memory_poses = torch.stack(self.poses).to(device)
             spatial_dists = torch.norm(memory_poses[:, :3] - current_pos, dim=1)
-            spatial_similarities = torch.exp(-spatial_dists / self.SCORING_CONFIG['retrieval_spatial_radius'])  # 使用检索专用半径
+            spatial_similarities = torch.exp(-spatial_dists / self.SCORING_CONFIG['retrieval_spatial_radius'])  # Use retrieval-specific radius
             
-            # 4. 使用频率加权（经验因素）
+            # 4. Usage frequency weighting (experience factor)
             usage_scores = torch.tensor(self.usage_counts, device=device, dtype=torch.float)
-            usage_weights = torch.log(usage_scores + 1) / 5.0  # 对数缩放，避免过度偏向
+            usage_weights = torch.log(usage_scores + 1) / 5.0  # Logarithmic scaling, avoid excessive bias
             
-            # 综合检索评分：使用自适应权重
+            # Comprehensive retrieval scoring: use adaptive weights
             retrieval_scores = (action_weight * action_similarities + 
                                memory_weight * norm_scores + 
                                spatial_weight * spatial_similarities +
                                usage_weight * usage_weights)
         else:
-            # 没有目标动作时，主要基于记忆价值和空间相关性
+            # When no target action, primarily based on memory value and spatial relevance
             memory_scores = torch.tensor(self.scores, device=device)
             norm_scores = memory_scores / self.SCORING_CONFIG['max_score']
             
@@ -345,60 +351,60 @@ class MemoryBuffer:
     
     def update_usage_scores(self, used_indices: List[int], current_frame_idx: int):
         """
-        动态衰减系统：实现固定记忆时间 + 加速衰减机制
+        Dynamic decay system: implement fixed memory time + accelerated decay mechanism
         
-        设计逻辑：
-        1. 固定记忆时间tx=3步：前3步完全不衰减
-        2. 第4步开始衰减：衰减速度随未使用步数递增
-        3. 使用时分数提升并重置衰减冷却期
+        Design logic:
+        1. Fixed memory time tx=3 steps: no decay for first 3 steps
+        2. Start decay from 4th step: decay speed increases with unused steps
+        3. Boost score and reset decay cooldown when used
         
         Args:
-            used_indices: 本次推理中使用的记忆索引列表
-            current_frame_idx: 当前帧索引
+            used_indices: List of memory indices used in current inference
+            current_frame_idx: Current frame index
         """
         config = self.SCORING_CONFIG
-        fixed_memory_time = config['fixed_memory_time']      # tx = 3步固定记忆时间
-        base_decay = config['base_decay_rate']               # 基础衰减率
-        accel_decay = config['accelerated_decay_rate']       # 加速衰减率a
+        fixed_memory_time = config['fixed_memory_time']      # tx = 3 steps fixed memory time
+        base_decay = config['base_decay_rate']               # Base decay rate
+        accel_decay = config['accelerated_decay_rate']       # Accelerated decay rate a
         
-        # 1. 提升使用过的记忆分数并重置衰减冷却
+        # 1. Boost used memory scores and reset decay cooldown
         for idx in used_indices:
             if 0 <= idx < len(self.scores):
-                # 分数提升
+                # Score boost
                 self.scores[idx] = min(
                     self.scores[idx] + config['usage_boost'],
                     config['max_score']
                 )
                 self.usage_counts[idx] += 1
                 self.last_used[idx] = current_frame_idx
-                # 关键：重置衰减冷却期，重新享受3步保护
+                # Key: reset decay cooldown period, enjoy 3-step protection again
                 self.unused_steps[idx] = 0
         
-        # 2. 对未使用的记忆应用动态衰减系统
+        # 2. Apply dynamic decay system to unused memories
         for i in range(len(self.scores)):
             if i not in used_indices:
-                # 增加连续未使用步数
+                # Increase consecutive unused steps
                 self.unused_steps[i] += 1
                 
-                # 固定记忆时间保护：前tx步完全不衰减
+                # Fixed memory time protection: no decay for first tx steps
                 if self.unused_steps[i] <= fixed_memory_time:
-                    continue  # 跳过衰减，享受保护期
+                    continue  # Skip decay, enjoy protection period
                 
-                # 开始动态衰减：第4步及以后
-                excess_steps = self.unused_steps[i] - fixed_memory_time  # 超出保护期的步数
+                # Start dynamic decay: from 4th step onwards
+                excess_steps = self.unused_steps[i] - fixed_memory_time  # Steps exceeding protection period
                 
-                # 加速衰减公式：衰减率随未使用步数递增
+                # Accelerated decay formula: decay rate increases with unused steps
                 # decay = base_decay * (accel_decay ^ excess_steps)
-                # 这样第4步衰减较慢，但越往后衰减越快
+                # This way 4th step decays slowly, but gets faster later
                 dynamic_decay_rate = base_decay * (accel_decay ** excess_steps)
                 
-                # 应用衰减
+                # Apply decay
                 self.scores[i] = max(
                     self.scores[i] - dynamic_decay_rate,
                     config['min_survival_score']
                 )
                 
-                # 调试信息：可以在需要时启用
+                # Debug info: can be enabled when needed
                 # print(f"Memory {i}: unused_steps={self.unused_steps[i]}, "
                 #       f"excess_steps={excess_steps}, dynamic_decay={dynamic_decay_rate:.2f}, "
                 #       f"new_score={self.scores[i]:.2f}")
@@ -407,21 +413,21 @@ class MemoryBuffer:
     def should_store_frame(self, pose: torch.Tensor, action: torch.Tensor = None, 
                           frame_idx: int = 0, min_distance: float = 5.0) -> bool:
         """
-        判断是否应该将当前帧存储到记忆buffer中
-        第一阶段策略：始终计算评分，保留最高的40帧
+        Determine whether current frame should be stored in memory buffer
+        Stage 1 strategy: always calculate score, retain highest 40 frames
         """
-        # 始终返回True，让add_frame方法处理替换逻辑
+        # Always return True, let add_frame method handle replacement logic
         return True
     
     def get_relevant_frames(self, current_pose: torch.Tensor, target_action: torch.Tensor = None, k: int = 8) -> Optional[torch.Tensor]:
         """
-        基于灵活的检索标准获取最相关的帧
-        重点关注：行为相似性 -> 实用性 -> 经验价值
+        Get most relevant frames based on flexible retrieval criteria
+        Focus: behavioral similarity -> utility -> experience value
         
         Args:
-            current_pose: 当前位置
-            target_action: 目标动作 (当前要执行的动作)
-            k: 返回的帧数量
+            current_pose: Current position
+            target_action: Target action (action to be executed currently)
+            k: Number of frames to return
         """
         if len(self.frames) == 0:
             return None
@@ -429,14 +435,14 @@ class MemoryBuffer:
         if len(self.frames) <= k:
             return torch.stack(self.frames).to(current_pose.device)
         
-        # 计算检索相关性分数（使用灵活的检索标准）
+        # Calculate retrieval relevance scores (using flexible retrieval criteria)
         retrieval_scores = self.compute_retrieval_score(current_pose, target_action)
         
-        # 选择top-k
+        # Select top-k
         top_k_indices = torch.topk(retrieval_scores, min(k, len(retrieval_scores))).indices
         used_indices = top_k_indices.tolist()
         
-        # 更新使用统计（如果有frame_counter信息）
+        # Update usage statistics (if frame_counter info available)
         if hasattr(self, 'current_frame_idx'):
             self.update_usage_scores(used_indices, self.current_frame_idx)
         
@@ -445,8 +451,8 @@ class MemoryBuffer:
     
     def _compute_action_similarity_for_retrieval(self, target_action: torch.Tensor, memory_actions: torch.Tensor) -> torch.Tensor:
         """
-        专门为检索设计的动作相似性计算
-        重点：相似动作应该找到最近的相似执行案例
+        Action similarity calculation specifically designed for retrieval
+        Focus: similar actions should find nearest similar execution cases
         """
         target_linear = target_action[:2]
         target_yaw = target_action[2]
@@ -454,17 +460,17 @@ class MemoryBuffer:
         memory_linear = memory_actions[:, :2]
         memory_yaw = memory_actions[:, 2]
         
-        # 1. 线性运动相似性
+        # 1. Linear motion similarity
         target_linear_norm = torch.norm(target_linear)
         memory_linear_norm = torch.norm(memory_linear, dim=1)
         
-        # 运动幅度相似性
+        # Motion magnitude similarity
         magnitude_diff = torch.abs(target_linear_norm - memory_linear_norm)
-        magnitude_sims = torch.exp(-magnitude_diff / 0.3)  # 更严格的幅度匹配
+        magnitude_sims = torch.exp(-magnitude_diff / 0.3)  # Stricter magnitude matching
         
-        # 运动方向相似性
+        # Motion direction similarity
         direction_sims = torch.ones_like(magnitude_sims)
-        if target_linear_norm > 0.1:  # 有明显线性运动
+        if target_linear_norm > 0.1:  # Has obvious linear motion
             target_direction = target_linear / target_linear_norm
             valid_memory = memory_linear_norm > 0.1
             if valid_memory.any():
@@ -472,64 +478,64 @@ class MemoryBuffer:
                 dot_products = torch.mm(memory_directions, target_direction.unsqueeze(1)).squeeze()
                 direction_sims[valid_memory] = torch.clamp((dot_products + 1) / 2, 0, 1)
         
-        # 2. 转向行为相似性 - 更精确匹配
+        # 2. Turning behavior similarity - more precise matching
         yaw_sims = self._compute_precise_rotation_similarity(target_yaw, memory_yaw)
         
-        # 3. 综合相似性：对于检索，我们更关注精确匹配
-        # 线性运动50% + 方向25% + 转向25%
+        # 3. Comprehensive similarity: for retrieval, we focus more on precise matching
+        # Linear motion 50% + direction 25% + turning 25%
         action_similarities = 0.5 * magnitude_sims + 0.25 * direction_sims + 0.25 * yaw_sims
         
         return action_similarities
     
     def _compute_precise_rotation_similarity(self, target_yaw: torch.Tensor, memory_yaw: torch.Tensor) -> torch.Tensor:
         """
-        精确的转向相似性计算，用于动作检索
-        重点：相同类型的转向动作应该获得高相似性
+        Precise turning similarity calculation for action retrieval
+        Focus: same type of turning actions should get high similarity
         """
         config = self.SCORING_CONFIG
         
         target_abs = torch.abs(target_yaw)
         memory_abs = torch.abs(memory_yaw)
         
-        # 转向类型分类
+        # Turning type classification
         def classify_turn(yaw_abs):
-            if yaw_abs < 0.1:  # 直行
+            if yaw_abs < 0.1:  # Straight
                 return 0
-            elif yaw_abs < config['significant_turn_threshold']:  # 微调
+            elif yaw_abs < config['significant_turn_threshold']:  # Fine adjustment
                 return 1
-            elif yaw_abs < config['sharp_turn_threshold']:  # 转弯
+            elif yaw_abs < config['sharp_turn_threshold']:  # Turn
                 return 2
-            else:  # 急转弯
+            else:  # Sharp turn
                 return 3
         
         target_class = classify_turn(target_abs)
         memory_classes = torch.tensor([classify_turn(y) for y in memory_abs], device=memory_yaw.device)
         
-        # 方向匹配
+        # Direction matching
         target_direction = torch.sign(target_yaw)
         memory_directions = torch.sign(memory_yaw)
         direction_match = (target_direction == memory_directions).float()
         
-        # 类型匹配
+        # Type matching
         class_match = (target_class == memory_classes).float()
         
-        # 角度差异
+        # Angle difference
         yaw_diff = torch.abs(target_yaw - memory_yaw)
-        angle_similarity = torch.exp(-yaw_diff / 0.2)  # 更严格的角度匹配
+        angle_similarity = torch.exp(-yaw_diff / 0.2)  # Stricter angle matching
         
-        # 综合评分：完全匹配 > 同类型同方向 > 角度相近
-        similarities = (0.5 * class_match * direction_match +  # 完全匹配
-                       0.3 * class_match +                    # 同类型
-                       0.2 * angle_similarity)                # 角度相近
+        # Comprehensive scoring: exact match > same type same direction > similar angle
+        similarities = (0.5 * class_match * direction_match +  # Exact match
+                       0.3 * class_match +                    # Same type
+                       0.2 * angle_similarity)                # Similar angle
         
         return similarities
     
     def get_memory_stats(self) -> dict:
-        """获取记忆缓存的统计信息，用于调试和监控"""
+        """Get memory cache statistics for debugging and monitoring"""
         if len(self.frames) == 0:
             return {"empty": True}
         
-        # 分析动态衰减系统状态
+        # Analyze dynamic decay system status
         protected_memories = sum(1 for steps in self.unused_steps if steps <= self.SCORING_CONFIG['fixed_memory_time'])
         decaying_memories = sum(1 for steps in self.unused_steps if steps > self.SCORING_CONFIG['fixed_memory_time'])
         avg_unused_steps = sum(self.unused_steps) / len(self.unused_steps) if self.unused_steps else 0
@@ -542,10 +548,10 @@ class MemoryBuffer:
             "lowest_score": min(self.scores),
             "total_usage": sum(self.usage_counts),
             "most_used_count": max(self.usage_counts) if self.usage_counts else 0,
-            # 动态衰减系统统计
-            "protected_memories": protected_memories,      # 享受保护期的记忆数
-            "decaying_memories": decaying_memories,        # 正在衰减的记忆数
-            "avg_unused_steps": avg_unused_steps,          # 平均连续未使用步数
+            # Dynamic decay system statistics
+            "protected_memories": protected_memories,      # Number of memories enjoying protection period
+            "decaying_memories": decaying_memories,        # Number of memories currently decaying
+            "avg_unused_steps": avg_unused_steps,          # Average consecutive unused steps
             "max_unused_steps": max(self.unused_steps) if self.unused_steps else 0,
             "fixed_memory_time": self.SCORING_CONFIG['fixed_memory_time'],
             "accelerated_decay_rate": self.SCORING_CONFIG['accelerated_decay_rate'],
@@ -554,7 +560,7 @@ class MemoryBuffer:
     
     def get_adaptive_scoring_stats(self, current_pose: torch.Tensor, target_action: torch.Tensor = None) -> dict:
         """
-        获取自适应评分系统的统计信息
+        Get adaptive scoring system statistics
         """
         if target_action is None:
             return {"adaptive_scoring": "disabled", "reason": "no_target_action"}
@@ -567,7 +573,7 @@ class MemoryBuffer:
         complexity = self.adaptive_scorer.compute_situation_complexity(current_situation)
         adaptive_weights = self.adaptive_scorer.compute_adaptive_weights(current_situation)
         
-        # 比较默认权重和自适应权重
+        # Compare default weights and adaptive weights
         default_weights = {
             'action': self.SCORING_CONFIG['retrieval_action_weight'],
             'memory': self.SCORING_CONFIG['retrieval_memory_weight'],
@@ -594,7 +600,7 @@ class MemoryBuffer:
         }
     
     def reset_memory(self):
-        """重置记忆缓存"""
+        """Reset memory cache"""
         self.frames.clear()
         self.poses.clear()
         self.actions.clear()
@@ -602,7 +608,7 @@ class MemoryBuffer:
         self.scores.clear()
         self.usage_counts.clear()
         self.last_used.clear()
-        self.unused_steps.clear()  # 重置连续未使用步数
+        self.unused_steps.clear()  # Reset consecutive unused steps counter
     
 
 class SelectiveMemoryAttention(nn.Module):
@@ -870,18 +876,18 @@ class HybridCDiT(nn.Module):
         nn.init.constant_(self.final_layer.linear.bias, 0)
     
     def update_memory(self, frame_latent: torch.Tensor, pose: torch.Tensor, action: torch.Tensor = None):
-        """智能更新记忆缓存，基于评分系统决定存储"""
+        """Intelligently update memory cache, deciding storage based on scoring system"""
         if self.memory_buffer is not None:
-            # 使用智能存储机制
+            # Use intelligent storage mechanism
             stored = self.memory_buffer.add_frame(frame_latent, pose, action, self.frame_counter)
-            # 更新当前帧索引，用于分数衰减计算
+            # Update current frame index for score decay calculation
             self.memory_buffer.current_frame_idx = self.frame_counter
             self.frame_counter += 1
             return stored
         return False
     
     def get_memory_stats(self):
-        """获取记忆系统的统计信息"""
+        """Get memory system statistics"""
         if self.memory_buffer is not None:
             return self.memory_buffer.get_memory_stats()
         return {"memory_disabled": True}
@@ -947,7 +953,7 @@ class HybridCDiT(nn.Module):
         memory_activation_score = 0.0
         
         # Only use memory buffer during inference phase (not training mode) on GPU cluster
-        if self.memory_enabled and current_pose is not None and not self.training:
+        if self.memory_enabled and current_pose is not None and not self.training and self.memory_buffer is not None:
             # Get relevant memory frames based on intended action (behavioral similarity)
             target_action = y[0] if y is not None else None  # Current target action
             memory_frames = self.memory_buffer.get_relevant_frames(

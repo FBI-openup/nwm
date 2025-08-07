@@ -7,6 +7,43 @@
 # A script to run multinode training with submitit.
 # --------------------------------------------------------
 
+"""
+SLURM Multi-node Training Script
+===============================
+
+This script enables distributed training across multiple nodes using SLURM job scheduler.
+It is OPTIONAL and only needed for large-scale cluster training.
+
+FUNCTIONALITY:
+- Submits training jobs to SLURM clusters
+- Manages multi-node distributed training coordination
+- Handles job scheduling, resource allocation, and fault tolerance
+- Supports automatic job requeuing and checkpoint resumption
+
+OPTIONAL DEPENDENCY:
+This script requires the submitit library which is NOT installed by default.
+
+To install the required dependency:
+pip install submitit
+
+WHEN TO USE:
+- You have access to a SLURM cluster (HPC/research clusters)
+- You want to train on multiple nodes (8+ GPUs across multiple machines)
+- You need automated job management and resource scheduling
+
+WHEN NOT NEEDED:
+- Single GPU training: Use train.py directly
+- Single node multi-GPU: Use torchrun with train.py
+- Local development: Use train.py with appropriate config
+
+USAGE EXAMPLES:
+python submitit_train_cw.py --nodes 8 --ngpus 8 --config config/nwm_cdit_xl.yaml
+python submitit_train_cw.py --nodes 4 --ngpus 8 --partition gpu --qos high
+
+NOTE: This script is designed for Meta's internal cluster configuration.
+Modify SLURM parameters (partition, account, etc.) for your specific cluster.
+"""
+
 import argparse
 import os
 import uuid

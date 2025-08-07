@@ -1,429 +1,430 @@
 # Hybrid CDiT Memory System Design
 
-## 核心设计理念
+## Core Design Philosophy
 
-本项目实现了一个智能的Hybrid CDiT模型，结合了CDiT的精确条件控制和WorldMem的长期记忆能力。核心创新在于**分离存储与检索机制**，实现更智能的记忆管理。
+This project implements an intelligent Hybrid CDiT model that combines CDiT's precise conditional control with WorldMem's long-term memory capabilities. The core innovation lies in **separated storage and retrieval mechanisms**, enabling smarter memory management.
 
-## 架构依赖关系
+## Architecture Dependencies
 
-### models.py 核心组件依赖
+### Core Component Dependencies from models.py
 
-`hybrid_models.py` 依赖并复用 `models.py` 中的以下核心组件：
+`hybrid_models.py` depends on and reuses the following core components from `models.py`:
 
 ```python
 from models import TimestepEmbedder, ActionEmbedder, modulate, FinalLayer
 ```
 
-**组件功能说明：**
-- **`TimestepEmbedder`**: 使用正弦余弦嵌入将标量时间步转换为向量表示
-- **`ActionEmbedder`**: 将动作向量 [x, y, yaw] 嵌入到隐藏表示空间
-- **`modulate`**: AdaLN (自适应层归一化) 调制函数，用于条件控制
-- **`FinalLayer`**: 最终输出层，将隐藏特征转换回图像空间
+**Component Functionality:**
+- **`TimestepEmbedder`**: Uses sinusoidal-cosine embedding to convert scalar timesteps to vector representations
+- **`ActionEmbedder`**: Embeds action vectors [x, y, yaw] into hidden representation space
+- **`modulate`**: AdaLN (Adaptive Layer Normalization) modulation function for conditional control
+- **`FinalLayer`**: Final output layer that converts hidden features back to image space
 
-**设计优势：**
-1. **模块化复用**: 避免重复实现，保持代码简洁
-2. **向后兼容**: 确保与原始CDiT组件完全一致
-3. **易于维护**: 核心组件的修改自动同步到混合模型
-4. **独立测试**: 可以独立测试CDiT和HybridCDiT的区别
+**Design Advantages:**
+1. **Modular Reuse**: Avoids code duplication and keeps implementation clean
+2. **Backward Compatibility**: Ensures complete consistency with original CDiT components
+3. **Easy Maintenance**: Core component modifications automatically sync to hybrid model
+4. **Independent Testing**: Enables independent testing of differences between CDiT and HybridCDiT
 
-### 设计哲学
-- **保留最佳，检索灵活**：保留评分最高的40帧，用灵活标准匹配相关记忆
-- **行为导向**：重点关注动作行为的相似性，而非简单的空间距离
-- **动态衰减**：实现记忆的自然遗忘和重要性调整
-- **自适应优化**：第二阶段新增零参数自适应检索权重系统
-- **模块化复用**：充分利用 `models.py` 中已验证的核心组件
+### Design Philosophy
+- **Keep the Best, Retrieve Flexibly**: Retain the top-scored 40 frames, use flexible criteria to match relevant memories
+- **Behavior-Oriented**: Focus on action behavior similarity rather than simple spatial distance
+- **Dynamic Decay**: Implement natural forgetting and importance adjustment of memories
+- **Adaptive Optimization**: Phase 2 adds zero-parameter adaptive retrieval weight system
+- **Modular Reuse**: Fully utilize validated core components from `models.py`
 
-## 双标准记忆系统 (第一阶段实现 + 第二阶段自适应优化)
+## Dual-Standard Memory System (Phase 1 Implementation + Phase 2 Adaptive Optimization)
 
-### 1. 存储标准（智能筛选最高分40帧）
+### 1. Storage Criteria (Intelligent Selection of Top-Scored 40 Frames)
 
-存储系统采用100分制评分系统，始终保留评分最高的40帧。**无存储阈值限制**，所有帧都参与评分，系统自动淘汰低分帧。
+The storage system uses a 100-point scoring system, always retaining the top-scored 40 frames. **No storage threshold limitation** - all frames participate in scoring, and the system automatically eliminates low-scoring frames.
 
-#### 第一阶段评分重点：转弯行为 + 空间独特性
+#### Phase 1 Scoring Focus: Turning Behavior + Spatial Uniqueness
 
-**转弯行为检测 (核心特征):**
-- **急转弯地标** (+50.0分): `storage_sharp_turn_weight` - 导航中的重要节点 (≥26°)
-- **重要转弯** (+35.0分): `storage_turn_weight` - 次要导航节点 (≥14°)
-- **复杂机动** (+15.0分): `storage_complex_maneuver` - 转弯同时前进的困难路段
-- **平凡动作** (-8.0分): `storage_trivial_penalty` - 降低普通直行的价值
+**Turning Behavior Detection (Core Features):**
+- **Sharp Turn Landmarks** (+50.0 points): `storage_sharp_turn_weight` - Important navigation nodes (≥26°)
+- **Significant Turns** (+35.0 points): `storage_turn_weight` - Secondary navigation nodes (≥14°)
+- **Complex Maneuvers** (+15.0 points): `storage_complex_maneuver` - Difficult segments with turning while moving forward
+- **Trivial Actions** (-8.0 points): `storage_trivial_penalty` - Reduces value of ordinary straight movement
 
-**空间独特性检测:**
-- **新区域探索** (+最多60.0分): `storage_spatial_weight` - 距离现有记忆足够远的位置 (≥4米)
-- **位置重复** (-12.0分): `storage_close_penalty` - 重复区域的价值降低 (<4米)
-- **第一帧奖励** (+40.0分): `storage_first_frame_bonus` - 起点的特殊重要性
-**存储策略:**
-- **最大容量**: 40帧 (`max_size`)
-- **存储策略**: 保留评分最高的40帧，无阈值限制
-- **替换机制**: 当缓存满时，新帧与最低分帧竞争，高分者胜出
+**Spatial Uniqueness Detection:**
+- **New Area Exploration** (+up to 60.0 points): `storage_spatial_weight` - Positions sufficiently far from existing memories (≥4 meters)
+- **Position Repetition** (-12.0 points): `storage_close_penalty` - Reduced value for repeated areas (<4 meters)
+- **First Frame Bonus** (+40.0 points): `storage_first_frame_bonus` - Special importance of starting point
 
-**行为分类阈值 (第一阶段重点):**
-- **重要转弯**: 0.25弧度 (~14°) (`significant_turn_threshold`)
-- **急转弯**: 0.45弧度 (~26°) (`sharp_turn_threshold`)  
-- **线性运动**: 0.2米 (`linear_motion_threshold`)
+**Storage Strategy:**
+- **Maximum Capacity**: 40 frames (`max_size`)
+- **Storage Policy**: Retain top-scored 40 frames, no threshold limitation
+- **Replacement Mechanism**: When cache is full, new frames compete with lowest-scoring frames, highest score wins
 
-**第一阶段设计优势:**
-- ✅ **简化评分**: 重点关注转弯行为和空间独特性
-- ✅ **无阈值限制**: 所有帧都有机会进入记忆，避免错失重要帧
-- ✅ **动态竞争**: 始终保持最高质量的40帧记忆
-- ✅ **实现简单**: 降低复杂度，便于调试和优化
+**Behavior Classification Thresholds (Phase 1 Focus):**
+- **Significant Turn**: 0.25 radians (~14°) (`significant_turn_threshold`)
+- **Sharp Turn**: 0.45 radians (~26°) (`sharp_turn_threshold`)
+- **Linear Motion**: 0.2 meters (`linear_motion_threshold`)
 
-### 2. 检索标准（灵活匹配 + 第二阶段自适应优化）
+**Phase 1 Design Advantages:**
+- ✅ **Simplified Scoring**: Focus on turning behavior and spatial uniqueness
+- ✅ **No Threshold Limitation**: All frames have chance to enter memory, avoiding missing important frames
+- ✅ **Dynamic Competition**: Always maintain highest quality 40-frame memory
+- ✅ **Simple Implementation**: Reduced complexity for easier debugging and optimization
 
-检索系统负责找到对当前推理最有帮助的记忆，采用多因素加权评分。
+### 2. Retrieval Criteria (Flexible Matching + Phase 2 Adaptive Optimization)
 
-#### 第二阶段新增：零参数自适应权重系统
+The retrieval system is responsible for finding the most helpful memories for current inference, using multi-factor weighted scoring.
 
-**核心理念**：根据当前情况的复杂度，动态调整检索权重，无需训练参数。
+#### Phase 2 Addition: Zero-Parameter Adaptive Weight System
 
-**自适应逻辑**：
-- **静止/慢速** (线性速度 < 0.1): 
-  - 动作权重 ↓ (0.2) - 动作不明显
-  - 空间权重 ↑↑ (0.6) - 主要依赖位置信息
-- **快速移动** (线性速度 > 0.4):
-  - 动作权重 ↑ (0.45) - 动作重要，但不超过空间
-  - 空间权重 ↑ (0.35) - 空间仍然是主导因素
-- **大转弯** (转弯角度 > 0.3):
-  - 动作权重 ↑ (最高0.6) - 转弯行为重要
-  - 空间权重保持 (最低0.25) - 空间信息依然关键
+**Core Concept**: Dynamically adjust retrieval weights based on current situation complexity, without requiring training parameters.
 
-**复杂度触发阈值**：只有复杂度 > 0.3 时才启用自适应权重，简单情况使用默认权重。
+**Adaptive Logic**:
+- **Stationary/Slow** (linear velocity < 0.1):
+  - Action weight ↓ (0.2) - Actions are not obvious
+  - Spatial weight ↑↑ (0.6) - Mainly rely on position information
+- **Fast Movement** (linear velocity > 0.4):
+  - Action weight ↑ (0.45) - Actions important, but not exceeding spatial
+  - Spatial weight ↑ (0.35) - Spatial remains the dominant factor
+- **Large Turns** (turn angle > 0.3):
+  - Action weight ↑ (up to 0.6) - Turning behavior important
+  - Spatial weight maintained (minimum 0.25) - Spatial information still critical
 
-#### 权重分配（默认 + 自适应）
-- **空间相关性**: 默认40% → 自适应25-60% - **主要因素**，空间位置对记忆最重要
-- **动作相似性**: 默认35% → 自适应20-60% - 重要因素，根据情况动态调整
-- **记忆价值**: 默认20% → 自适应15% - 重要因素，基本保持稳定
-- **使用经验**: 默认5% → 自适应5% - 辅助因素，保持稳定
+**Complexity Trigger Threshold**: Adaptive weights are enabled only when complexity > 0.3, simple cases use default weights.
 
-**检索参数:**
-- **空间匹配半径**: 10.0米 (`retrieval_spatial_radius`)
-- **默认检索数量**: 8帧 (`k=8`)
+#### Weight Distribution (Default + Adaptive)
+- **Spatial Relevance**: Default 40% → Adaptive 25-60% - **Primary factor**, spatial position most important for memory
+- **Action Similarity**: Default 35% → Adaptive 20-60% - Important factor, dynamically adjusted based on situation
+- **Memory Value**: Default 20% → Adaptive 15% - Important factor, basically remains stable
+- **Usage Experience**: Default 5% → Adaptive 5% - Auxiliary factor, remains stable
 
-#### 动作相似性算法
-1. **运动幅度匹配**: 相似的移动距离 (50%权重)
-2. **方向一致性**: 相似的移动方向 (25%权重)  
-3. **转向行为分类**: 直行/微调/转弯/急转弯的精确匹配 (25%权重)
+**Retrieval Parameters:**
+- **Spatial Matching Radius**: 10.0 meters (`retrieval_spatial_radius`)
+- **Default Retrieval Count**: 8 frames (`k=8`)
 
-## 动态衰减系统
+#### Action Similarity Algorithm
+1. **Motion Magnitude Matching**: Similar movement distances (50% weight)
+2. **Direction Consistency**: Similar movement directions (25% weight)
+3. **Turn Behavior Classification**: Precise matching of straight/minor/turn/sharp turn behaviors (25% weight)
 
-### 固定记忆时间保护机制（与代码实现一致）
-- **保护期**: 前3步 (`fixed_memory_time=3`) 完全不衰减
-- **设计理由**: 新记忆需要时间证明其价值，避免过早淘汰
+## Dynamic Decay System
 
-### 加速衰减机制
-使用动态衰减公式实现记忆的自然遗忘：
-衰减率 = 基础衰减率 × (加速系数 ^ 超出保护期步数)
+### Fixed Memory Time Protection Mechanism (Consistent with Code Implementation)
+- **Protection Period**: First 3 steps (`fixed_memory_time=3`) with no decay at all
+- **Design Rationale**: New memories need time to prove their value, avoiding premature elimination
+
+### Accelerated Decay Mechanism
+Uses dynamic decay formula to implement natural forgetting of memories:
+Decay Rate = Base Decay Rate × (Acceleration Factor ^ Steps Exceeding Protection Period)
 ```python
-# 代码中的实际衰减计算
-excess_steps = unused_steps - fixed_memory_time  # 超出保护期的步数
+# Actual decay calculation in code
+excess_steps = unused_steps - fixed_memory_time  # Steps exceeding protection period
 dynamic_decay_rate = base_decay_rate * (accelerated_decay_rate ** excess_steps)
 new_score = max(old_score - dynamic_decay_rate, min_survival_score)
 ```
 
-#### 参数设置（代码中的实际值）
-- **基础衰减率**: 1.2分/步 (`base_decay_rate`)
-- **加速系数**: 1.4 (`accelerated_decay_rate`)
-- **最低生存分数**: 3.0分 (`min_survival_score`)
-- **最高分数上限**: 100.0分 (`max_score`)
+#### Parameter Settings (Actual Values in Code)
+- **Base Decay Rate**: 1.2 points/step (`base_decay_rate`)
+- **Acceleration Factor**: 1.4 (`accelerated_decay_rate`)
+- **Minimum Survival Score**: 3.0 points (`min_survival_score`)
+- **Maximum Score Limit**: 100.0 points (`max_score`)
 
-#### 衰减示例（实际计算）
-- **第1-3步**: 无衰减（保护期，`unused_steps <= 3`）
-- **第4步**: 衰减 1.2 × 1.4¹ = 1.68分
-- **第5步**: 衰减 1.2 × 1.4² = 2.35分  
-- **第6步**: 衰减 1.2 × 1.4³ = 3.29分
-- **第7步**: 衰减 1.2 × 1.4⁴ = 4.61分
-- **持续加速**: 衰减速度递增，促进遗忘
+#### Decay Examples (Actual Calculations)
+- **Steps 1-3**: No decay (protection period, `unused_steps <= 3`)
+- **Step 4**: Decay 1.2 × 1.4¹ = 1.68 points
+- **Step 5**: Decay 1.2 × 1.4² = 2.35 points
+- **Step 6**: Decay 1.2 × 1.4³ = 3.29 points
+- **Step 7**: Decay 1.2 × 1.4⁴ = 4.61 points
+- **Continuous Acceleration**: Decay rate increases progressively, promoting forgetting
 
-### 使用奖励机制（代码实现）
-- **分数提升**: +5.0分/次使用 (`usage_boost`)
-- **冷却重置**: 重新享受3步保护期 (`unused_steps=0`)
-- **使用统计**: 记录使用频率用于检索权重计算
+### Usage Reward Mechanism (Code Implementation)
+- **Score Boost**: +5.0 points per use (`usage_boost`)
+- **Cooldown Reset**: Re-enjoy 3-step protection period (`unused_steps=0`)
+- **Usage Statistics**: Record usage frequency for retrieval weight calculation
 
 ```python
-# 代码中的使用奖励逻辑
+# Usage reward logic in code
 self.scores[idx] = min(
-    self.scores[idx] + config['usage_boost'],  # +5.0分
-    config['max_score']  # 不超过100分上限
+    self.scores[idx] + config['usage_boost'],  # +5.0 points
+    config['max_score']  # Not exceeding 100-point limit
 )
-self.unused_steps[idx] = 0  # 重置衰减冷却期
+self.unused_steps[idx] = 0  # Reset decay cooldown period
 ```
 
-## 记忆统计与监控
+## Memory Statistics and Monitoring
 
-系统提供完整的统计信息用于调试和优化：
+The system provides complete statistical information for debugging and optimization:
 
-### 基础统计
-- 总记忆数 / 最大容量
-- 平均分数 / 最高分数 / 最低分数
-- 总使用次数 / 最高使用次数
+### Basic Statistics
+- Total memories / Maximum capacity
+- Average score / Highest score / Lowest score
+- Total usage count / Highest usage count
 
-### 动态衰减统计
-- **保护期记忆数**: 享受保护的记忆数量
-- **衰减期记忆数**: 正在衰减的记忆数量  
-- **平均未使用步数**: 衰减系统健康度指标
-- **最大未使用步数**: 最久未使用的记忆
+### Dynamic Decay Statistics
+- **Protected Memories**: Number of memories enjoying protection
+- **Decaying Memories**: Number of memories currently decaying
+- **Average Unused Steps**: Health indicator of decay system
+- **Maximum Unused Steps**: Longest unused memory
 
-## 技术实现细节
+## Technical Implementation Details
 
-### 架构集成
-- **CDiT主干**: 保持原有的自注意力和交叉注意力
-- **选择性记忆注意力**: 在后半层（14-28层）激活记忆机制
-- **自适应激活**: 基于相关性分数动态决定是否使用记忆
+### Architecture Integration
+- **CDiT Backbone**: Maintains original self-attention and cross-attention
+- **Selective Memory Attention**: Activates memory mechanism in latter layers (14-28)
+- **Adaptive Activation**: Dynamically decides whether to use memory based on relevance scores
 
-### 训练与推理分离
-- **训练阶段**: 禁用记忆系统，专注于基础能力学习
-- **推理阶段**: 全面激活记忆系统，利用历史经验
+### Training and Inference Separation
+- **Training Phase**: Disables memory system, focuses on basic capability learning
+- **Inference Phase**: Fully activates memory system, utilizes historical experience
 
-### 内存管理
-- **智能缓存**: 基于评分的LRU替换策略
-- **GPU优化**: 高效的张量操作和内存复用
-- **批处理支持**: 支持批量推理的记忆管理
+### Memory Management
+- **Intelligent Caching**: LRU replacement strategy based on scoring
+- **GPU Optimization**: Efficient tensor operations and memory reuse
+- **Batch Processing Support**: Supports memory management for batch inference
 
-## 配置参数说明 (第一阶段实现 + 第二阶段自适应优化)
+## Configuration Parameter Description (Phase 1 Implementation + Phase 2 Adaptive Optimization)
 
-所有关键参数都在 `SCORING_CONFIG` 中集中管理，第二阶段新增零参数自适应系统：
+All key parameters are centrally managed in `SCORING_CONFIG`, Phase 2 adds zero-parameter adaptive system:
 
-### 存储标准参数（第一阶段：转弯和空间重点）
+### Storage Criteria Parameters (Phase 1: Turn and Spatial Focus)
 ```python
-# hybrid_models.py 中的第一阶段配置
-'storage_turn_weight': 35.0,           # 存储：转弯动作重要性
-'storage_sharp_turn_weight': 50.0,     # 存储：急转弯额外加权  
-'storage_spatial_weight': 30.0,        # 存储：空间独特性权重
-'storage_complex_maneuver': 15.0,      # 存储：复杂机动加分
-'storage_trivial_penalty': -8.0,       # 存储：平凡动作扣分
-'storage_close_penalty': -12.0,        # 存储：位置太近扣分
-'storage_first_frame_bonus': 40.0,     # 存储：第一帧起点奖励
-'storage_min_distance': 4.0,           # 存储：最小空间间距要求(米)
+# Phase 1 configuration in hybrid_models.py
+'storage_turn_weight': 35.0,           # Storage: Turn action importance
+'storage_sharp_turn_weight': 50.0,     # Storage: Sharp turn additional weighting
+'storage_spatial_weight': 30.0,        # Storage: Spatial uniqueness weight
+'storage_complex_maneuver': 15.0,      # Storage: Complex maneuver bonus
+'storage_trivial_penalty': -8.0,       # Storage: Trivial action penalty
+'storage_close_penalty': -12.0,        # Storage: Too close position penalty
+'storage_first_frame_bonus': 40.0,     # Storage: First frame starting point bonus
+'storage_min_distance': 4.0,           # Storage: Minimum spatial spacing requirement (meters)
 ```
 
-### 检索标准参数（第二阶段：自适应 + 默认权重）
+### Retrieval Criteria Parameters (Phase 2: Adaptive + Default Weights)
 ```python
-# 默认权重 (简单情况使用)
-'retrieval_action_weight': 0.35,       # 检索：动作相似性权重 (重要)
-'retrieval_memory_weight': 0.20,       # 检索：记忆价值权重 (重要)
-'retrieval_spatial_weight': 0.40,      # 检索：空间相关性权重 (主要) - 空间位置最重要
-'retrieval_usage_weight': 0.05,        # 检索：使用经验权重 (辅助)
-'retrieval_spatial_radius': 10.0,      # 检索：空间匹配半径(米)
+# Default weights (used in simple cases)
+'retrieval_action_weight': 0.35,       # Retrieval: Action similarity weight (important)
+'retrieval_memory_weight': 0.20,       # Retrieval: Memory value weight (important)
+'retrieval_spatial_weight': 0.40,      # Retrieval: Spatial relevance weight (primary) - Spatial position most important
+'retrieval_usage_weight': 0.05,        # Retrieval: Usage experience weight (auxiliary)
+'retrieval_spatial_radius': 10.0,      # Retrieval: Spatial matching radius (meters)
 
-# 第二阶段：零参数自适应权重 (复杂情况自动启用)
-# 静止/慢速: action=0.2, spatial=0.6(主导), memory=0.15, usage=0.05
-# 快速移动: action=0.45, spatial=0.35(仍为主导), memory=0.15, usage=0.05  
-# 大转弯: action=0.6(最高), spatial=0.25(最低但仍重要), memory=0.15, usage=0.05
-# 复杂度阈值: 0.3 (超过此值启用自适应权重)
+# Phase 2: Zero-parameter adaptive weights (automatically enabled in complex cases)
+# Stationary/slow: action=0.2, spatial=0.6(dominant), memory=0.15, usage=0.05
+# Fast movement: action=0.45, spatial=0.35(still dominant), memory=0.15, usage=0.05
+# Large turns: action=0.6(highest), spatial=0.25(lowest but still important), memory=0.15, usage=0.05
+# Complexity threshold: 0.3 (adaptive weights enabled above this value)
 ```
 
-### 动态衰减系统参数
+### Dynamic Decay System Parameters
 ```python
-'usage_boost': 5.0,                    # 每次使用的分数提升
-'fixed_memory_time': 3,                # 固定记忆时间：前3步不衰减
-'base_decay_rate': 1.2,                # 基础衰减率(分/步)
-'accelerated_decay_rate': 1.4,         # 加速衰减率：衰减速度递增系数
-'max_score': 100.0,                    # 最高分数上限
-'min_survival_score': 3.0,             # 保留的最低分数
+'usage_boost': 5.0,                    # Score boost per use
+'fixed_memory_time': 3,                # Fixed memory time: No decay for first 3 steps
+'base_decay_rate': 1.2,                # Base decay rate (points/step)
+'accelerated_decay_rate': 1.4,         # Accelerated decay rate: Decay speed increase factor
+'max_score': 100.0,                    # Maximum score limit
+'min_survival_score': 3.0,             # Minimum retention score
 ```
 
-### 行为分类阈值
+### Behavior Classification Thresholds
 ```python
-'significant_turn_threshold': 0.25,    # 重要转弯阈值(弧度, ~14°)
-'sharp_turn_threshold': 0.45,          # 急转弯阈值(弧度, ~26°)
-'linear_motion_threshold': 0.2,        # 线性运动阈值(米)
+'significant_turn_threshold': 0.25,    # Significant turn threshold (radians, ~14°)
+'sharp_turn_threshold': 0.45,          # Sharp turn threshold (radians, ~26°)
+'linear_motion_threshold': 0.2,        # Linear motion threshold (meters)
 ```
 
-### 缓存管理参数 (第一阶段简化)
+### Cache Management Parameters (Phase 1 Simplified)
 ```python
-# MemoryBuffer 初始化参数
-max_size: int = 40,                     # 最大缓存容量
-# 注意：第一阶段移除了 min_score_threshold，保留最高分40帧
+# MemoryBuffer initialization parameters
+max_size: int = 40,                     # Maximum cache capacity
+# Note: Phase 1 removed min_score_threshold, retains top-scored 40 frames
 ```
 
-### 模型架构参数
+### Model Architecture Parameters
 ```python
-# HybridCDiT 初始化参数
-memory_enabled: bool = True,            # 是否启用记忆机制
-memory_buffer_size: int = 50,           # 记忆缓存大小
-memory_layers: List[int] = None         # 记忆激活层 (默认: 后半层)
+# HybridCDiT initialization parameters
+memory_enabled: bool = True,            # Whether to enable memory mechanism
+memory_buffer_size: int = 50,           # Memory cache size
+memory_layers: List[int] = None         # Memory activation layers (default: latter half)
 
-# 默认记忆层配置
+# Default memory layer configuration
 if memory_layers is None:
-    memory_layers = list(range(depth // 2, depth))  # 后半层激活记忆
+    memory_layers = list(range(depth // 2, depth))  # Activate memory in latter half layers
 ```
 
-## 性能优势
+## Performance Advantages
 
-### 相比原始CDiT
-1. **长期一致性**: 记忆机制提供历史上下文
-2. **行为学习**: 从相似情况中学习最佳决策
-3. **适应性**: 动态调整记忆重要性
+### Compared to Original CDiT
+1. **Long-term Consistency**: Memory mechanism provides historical context
+2. **Behavior Learning**: Learn optimal decisions from similar situations
+3. **Adaptability**: Dynamic adjustment of memory importance
 
-### 相比简单WorldMem
-1. **智能筛选**: 不是所有帧都保存，只存储关键帧
-2. **精确检索**: 基于行为相似性而非简单距离
-3. **动态管理**: 自动遗忘和重要性调整
+### Compared to Simple WorldMem
+1. **Intelligent Filtering**: Not all frames are saved, only key frames are stored
+2. **Precise Retrieval**: Based on behavior similarity rather than simple distance
+3. **Dynamic Management**: Automatic forgetting and importance adjustment
 
-## 使用示例
+## Usage Examples
 
-### 基础使用（依赖 models.py）
+### Basic Usage (Dependent on models.py)
 
 ```python
-# 确保 models.py 在相同目录
+# Ensure models.py is in the same directory
 from hybrid_models import HybridCDiT_L_2
 
-# 创建混合模型 (第一阶段)
+# Create hybrid model (Phase 1)
 model = HybridCDiT_L_2(
     memory_enabled=True, 
-    memory_buffer_size=40,  # 固定保留40帧最高分记忆
-    memory_layers=list(range(12, 24))  # L模型的后半层
+    memory_buffer_size=40,  # Fixed retention of top-scored 40 frames
+    memory_layers=list(range(12, 24))  # Latter half layers of L model
 )
 
-# 推理时自动使用记忆
+# Automatic memory usage during inference
 output = model(
-    x=input_tensor,           # [N, C, H, W] 输入图像
-    t=timesteps,              # [N] 扩散时间步
-    y=actions,                # [N, 3] 动作条件 [dx, dy, dyaw]
-    x_cond=context_frames,    # [N, context_size, C, H, W] 上下文帧
-    rel_t=relative_time,      # [N] 相对时间
-    current_pose=poses        # [N, 4] 当前位姿 [x, y, z, yaw]
+    x=input_tensor,           # [N, C, H, W] Input image
+    t=timesteps,              # [N] Diffusion timesteps
+    y=actions,                # [N, 3] Action conditions [dx, dy, dyaw]
+    x_cond=context_frames,    # [N, context_size, C, H, W] Context frames
+    rel_t=relative_time,      # [N] Relative time
+    current_pose=poses        # [N, 4] Current pose [x, y, z, yaw]
 )
 
-# 获取记忆统计（与代码中 get_memory_stats() 一致）
+# Get memory statistics (consistent with get_memory_stats() in code)
 stats = model.get_memory_stats()
-print(f"记忆容量: {stats['total_memories']}/{stats['max_capacity']}")
-print(f"平均分数: {stats['average_score']:.2f}")
-print(f"保护期记忆: {stats['protected_memories']}")
-print(f"衰减期记忆: {stats['decaying_memories']}")
+print(f"Memory capacity: {stats['total_memories']}/{stats['max_capacity']}")
+print(f"Average score: {stats['average_score']:.2f}")
+print(f"Protected memories: {stats['protected_memories']}")
+print(f"Decaying memories: {stats['decaying_memories']}")
 
-# 第二阶段新增：获取自适应评分统计
+# Phase 2 addition: Get adaptive scoring statistics
 adaptive_stats = model.memory_buffer.get_adaptive_scoring_stats(poses[0], actions[0])
-print(f"复杂度评分: {adaptive_stats['complexity_score']:.3f}")
-print(f"使用自适应权重: {adaptive_stats['use_adaptive']}")
+print(f"Complexity score: {adaptive_stats['complexity_score']:.3f}")
+print(f"Using adaptive weights: {adaptive_stats['use_adaptive']}")
 if adaptive_stats['use_adaptive']:
-    print("权重调整:", adaptive_stats['weight_differences'])
+    print("Weight adjustments:", adaptive_stats['weight_differences'])
 ```
 
-### 纯CDiT模式（兼容性测试）
+### Pure CDiT Mode (Compatibility Testing)
 
 ```python
-# 禁用记忆，获得与原始CDiT相同的行为
+# Disable memory to get identical behavior to original CDiT
 model_cdit = HybridCDiT_L_2(memory_enabled=False)
 
-# 这种模式下不需要 current_pose 参数
+# In this mode, current_pose parameter is not needed
 output = model_cdit(x, t, y, x_cond, rel_t)
 ```
 
-### 记忆系统配置调优 (第一阶段)
+### Memory System Configuration Tuning (Phase 1)
 
 ```python
-# 创建模型后动态调整评分参数
+# Dynamically adjust scoring parameters after model creation
 model = HybridCDiT_L_2(memory_enabled=True)
 
-# 调整存储策略 - 更重视转弯行为
+# Adjust storage strategy - emphasize turning behavior more
 model.memory_buffer.SCORING_CONFIG.update({
-    'storage_turn_weight': 40.0,        # 提高转弯重要性
-    'storage_sharp_turn_weight': 60.0,  # 大幅提高急转弯重要性
-    'storage_trivial_penalty': -12.0,   # 更严格惩罚平凡动作
+    'storage_turn_weight': 40.0,        # Increase turn importance
+    'storage_sharp_turn_weight': 60.0,  # Significantly increase sharp turn importance
+    'storage_trivial_penalty': -12.0,   # More strict penalty for trivial actions
 })
 
-# 调整检索策略 - 更注重空间相似性  
+# Adjust retrieval strategy - focus more on spatial similarity
 model.memory_buffer.SCORING_CONFIG.update({
-    'retrieval_spatial_weight': 0.45,   # 增强空间相似性权重 (主导)
-    'retrieval_action_weight': 0.30,    # 降低动作权重但仍重要
-    'retrieval_memory_weight': 0.20,    # 适中记忆权重
-    'retrieval_usage_weight': 0.05,     # 降低使用权重
+    'retrieval_spatial_weight': 0.45,   # Enhance spatial similarity weight (dominant)
+    'retrieval_action_weight': 0.30,    # Reduce action weight but still important
+    'retrieval_memory_weight': 0.20,    # Moderate memory weight
+    'retrieval_usage_weight': 0.05,     # Reduce usage weight
 })
 
-# 调整衰减策略 - 更长保护期
+# Adjust decay strategy - longer protection period
 model.memory_buffer.SCORING_CONFIG.update({
-    'fixed_memory_time': 5,             # 延长保护期到5步
-    'usage_boost': 8.0,                 # 增加使用奖励
+    'fixed_memory_time': 5,             # Extend protection period to 5 steps
+    'usage_boost': 8.0,                 # Increase usage reward
 })
 ```
 
-### 记忆系统监控 (第二阶段增强)
+### Memory System Monitoring (Phase 2 Enhancement)
 
 ```python
-# 推理过程中实时监控记忆状态
+# Real-time monitoring of memory state during inference
 for step, (x, t, y, x_cond, rel_t, pose) in enumerate(dataloader):
     output = model(x, t, y, x_cond, rel_t, pose)
     
-    if step % 10 == 0:  # 每10步监控一次
+    if step % 10 == 0:  # Monitor every 10 steps
         stats = model.get_memory_stats()
         print(f"Step {step}:")
-        print(f"  记忆使用率: {stats['total_memories']}/{stats['max_capacity']}")
-        print(f"  平均未使用步数: {stats['avg_unused_steps']:.1f}")
-        print(f"  最高/最低分数: {stats['highest_score']:.1f}/{stats['lowest_score']:.1f}")
+        print(f"  Memory utilization: {stats['total_memories']}/{stats['max_capacity']}")
+        print(f"  Average unused steps: {stats['avg_unused_steps']:.1f}")
+        print(f"  Highest/Lowest scores: {stats['highest_score']:.1f}/{stats['lowest_score']:.1f}")
         
-        # 第二阶段新增：监控自适应评分系统
+        # Phase 2 addition: Monitor adaptive scoring system
         if y is not None and pose is not None:
             adaptive_stats = model.memory_buffer.get_adaptive_scoring_stats(pose[0], y[0])
-            print(f"  复杂度评分: {adaptive_stats['complexity_score']:.3f}")
-            print(f"  自适应权重: {'启用' if adaptive_stats['use_adaptive'] else '默认'}")
+            print(f"  Complexity score: {adaptive_stats['complexity_score']:.3f}")
+            print(f"  Adaptive weights: {'Enabled' if adaptive_stats['use_adaptive'] else 'Default'}")
             if adaptive_stats['use_adaptive']:
                 weight_diff = adaptive_stats['weight_differences']
-                print(f"  权重调整: 动作{weight_diff['action']:+.2f} 空间{weight_diff['spatial']:+.2f}")
+                print(f"  Weight adjustments: Action{weight_diff['action']:+.2f} Spatial{weight_diff['spatial']:+.2f}")
         
-        # 检查记忆系统健康度
+        # Check memory system health
         if stats['avg_unused_steps'] > 10:
-            print("  警告: 记忆平均未使用步数过高，考虑调整检索策略")
+            print("  Warning: Average unused steps too high, consider adjusting retrieval strategy")
         if stats['total_memories'] < stats['max_capacity'] * 0.5:
-            print("  提示: 记忆使用率较低，考虑降低存储阈值")
+            print("  Note: Memory utilization low, consider lowering storage threshold")
 ```
 
-## 项目文件结构与依赖关系
+## Project File Structure and Dependencies
 
-### 核心文件依赖图
+### Core File Dependency Graph
 
 ```
-models.py (基础组件)
+models.py (Basic Components)
     ├── TimestepEmbedder
     ├── ActionEmbedder  
     ├── modulate
     ├── FinalLayer
-    └── CDiT (原始模型)
+    └── CDiT (Original Model)
          │
          ▼
-hybrid_models.py (混合架构)
-    ├── MemoryBuffer (记忆缓存系统)
-    ├── SelectiveMemoryAttention (选择性记忆注意力)
-    ├── HybridCDiTBlock (混合变换器块)
-    └── HybridCDiT (主模型)
+hybrid_models.py (Hybrid Architecture)
+    ├── MemoryBuffer (Memory Cache System)
+    ├── SelectiveMemoryAttention (Selective Memory Attention)
+    ├── HybridCDiTBlock (Hybrid Transformer Block)
+    └── HybridCDiT (Main Model)
          │
          ▼
-应用层文件
-    ├── train.py (训练脚本)
-    ├── isolated_nwm_infer.py (推理脚本)
-    ├── planning_eval.py (规划评估)
-    └── interactive_model.ipynb (交互式测试)
+Application Layer Files
+    ├── train.py (Training Script)
+    ├── isolated_nwm_infer.py (Inference Script)
+    ├── planning_eval.py (Planning Evaluation)
+    └── interactive_model.ipynb (Interactive Testing)
 ```
 
-### 模块化设计原则
+### Modular Design Principles
 
-1. **基础组件复用** (`models.py`)
-   - 提供经过验证的核心嵌入组件
-   - 保持原始CDiT实现作为基准
-   - 确保数值计算的一致性
+1. **Basic Component Reuse** (`models.py`)
+   - Provides validated core embedding components
+   - Maintains original CDiT implementation as baseline
+   - Ensures numerical computation consistency
 
-2. **记忆系统扩展** (`hybrid_models.py`)
-   - 基于 `models.py` 构建混合架构
-   - 添加智能记忆管理功能
-   - 保持向后兼容性
+2. **Memory System Extension** (`hybrid_models.py`)
+   - Builds hybrid architecture based on `models.py`
+   - Adds intelligent memory management functionality
+   - Maintains backward compatibility
 
-3. **应用层适配**
-   - 现有脚本可以无缝切换模型
-   - 支持CDiT和HybridCDiT的A/B测试
-   - 渐进式迁移策略
+3. **Application Layer Adaptation**
+   - Existing scripts can seamlessly switch models
+   - Supports A/B testing between CDiT and HybridCDiT
+   - Progressive migration strategy
 
-### 兼容性保证
+### Compatibility Guarantee
 
-**向后兼容性:**
+**Backward Compatibility:**
 ```python
-# 使用原始CDiT
+# Using original CDiT
 from models import CDiT_L_2
 model_cdit = CDiT_L_2()
 
-# 使用混合模型的CDiT模式 (行为完全一致)
+# Using hybrid model's CDiT mode (behavior completely identical)
 from hybrid_models import HybridCDiT_L_2  
 model_hybrid = HybridCDiT_L_2(memory_enabled=False)
 
-# 两者应产生相同的输出 (数值精度范围内)
+# Both should produce identical outputs (within numerical precision)
 assert torch.allclose(
     model_cdit(x, t, y, x_cond, rel_t),
     model_hybrid(x, t, y, x_cond, rel_t),
@@ -431,122 +432,122 @@ assert torch.allclose(
 )
 ```
 
-**渐进式增强:**
+**Progressive Enhancement:**
 ```python
-# 阶段1: 使用CDiT模式验证基础功能
+# Stage 1: Use CDiT mode to verify basic functionality
 model = HybridCDiT_L_2(memory_enabled=False)
 
-# 阶段2: 启用记忆但不更新(只观察)
+# Stage 2: Enable memory but no updates (observation only)
 model = HybridCDiT_L_2(memory_enabled=True)
 output = model(x, t, y, x_cond, rel_t, pose, update_memory=False)
 
-# 阶段3: 完整启用记忆系统
+# Stage 3: Fully enable memory system
 model = HybridCDiT_L_2(memory_enabled=True)  
 output = model(x, t, y, x_cond, rel_t, pose, update_memory=True)
 ```
 
-## 调优建议 (第一阶段)
+## Tuning Recommendations (Phase 1)
 
-### 强化转弯行为检测
+### Strengthen Turn Behavior Detection
 ```python
-# 更重视转弯行为的存储策略
+# Storage strategy emphasizing turn behavior more
 model.memory_buffer.SCORING_CONFIG.update({
-    'storage_turn_weight': 45.0,        # 大幅增加转弯权重
-    'storage_sharp_turn_weight': 70.0,  # 极大增加急转弯权重
-    'storage_trivial_penalty': -15.0,   # 更严厉惩罚平凡动作
-    'storage_close_penalty': -15.0      # 更严格的空间去重
+    'storage_turn_weight': 45.0,        # Significantly increase turn weight
+    'storage_sharp_turn_weight': 70.0,  # Greatly increase sharp turn weight
+    'storage_trivial_penalty': -15.0,   # More strict penalty for trivial actions
+    'storage_close_penalty': -15.0      # Stricter spatial deduplication
 })
 ```
 
-### 提高检索准确性  
+### Improve Retrieval Accuracy
 ```python
-# 优化检索权重分配 - 空间优先策略
+# Optimize retrieval weight distribution - spatial priority strategy
 model.memory_buffer.SCORING_CONFIG.update({
-    'retrieval_spatial_weight': 0.50,   # 大幅增强空间相似性权重
-    'retrieval_action_weight': 0.30,    # 适中动作相似性权重
-    'retrieval_memory_weight': 0.15,    # 降低记忆价值影响
-    'retrieval_usage_weight': 0.05,     # 最小化使用经验权重
-    'retrieval_spatial_radius': 8.0,    # 缩小空间半径提高精度
+    'retrieval_spatial_weight': 0.50,   # Significantly enhance spatial similarity weight
+    'retrieval_action_weight': 0.30,    # Moderate action similarity weight
+    'retrieval_memory_weight': 0.15,    # Reduce memory value influence
+    'retrieval_usage_weight': 0.05,     # Minimize usage experience weight
+    'retrieval_spatial_radius': 8.0,    # Reduce spatial radius for better precision
 })
 ```
 
-### 优化衰减策略
+### Optimize Decay Strategy
 ```python
-# 调整记忆生命周期
+# Adjust memory lifecycle
 model.memory_buffer.SCORING_CONFIG.update({
-    'fixed_memory_time': 5,             # 延长保护期
-    'base_decay_rate': 1.0,             # 降低衰减速度
-    'usage_boost': 8.0,                 # 增加使用奖励
+    'fixed_memory_time': 5,             # Extend protection period
+    'base_decay_rate': 1.0,             # Reduce decay speed
+    'usage_boost': 8.0,                 # Increase usage reward
 })
 ```
 
-## 重要注意事项
+## Important Notes
 
-### 1. 依赖要求
-- **必须确保 `models.py` 在相同目录或Python路径中**
-- 如果移动 `hybrid_models.py`，需要更新导入路径
-- 所有核心组件的修改需要在 `models.py` 中进行
+### 1. Dependency Requirements
+- **Must ensure `models.py` is in the same directory or Python path**
+- If moving `hybrid_models.py`, need to update import paths
+- All core component modifications need to be made in `models.py`
 
-### 2. 内存管理
-- 记忆缓存会占用GPU内存，根据显存调整 `memory_buffer_size`
-- 推理时记忆系统处于激活状态，训练时自动禁用
-- 长时间推理建议定期检查记忆使用统计
+### 2. Memory Management
+- Memory cache will occupy GPU memory, adjust `memory_buffer_size` based on VRAM
+- Memory system is active during inference, automatically disabled during training
+- For long inference sessions, recommend periodic checking of memory usage statistics
 
-### 3. 性能考虑
-- 记忆激活会增加 ~15% 的计算开销
-- 可以通过调整 `memory_layers` 控制记忆使用的层数
-- 批处理推理时记忆在batch间共享
+### 3. Performance Considerations
+- Memory activation adds ~15% computational overhead
+- Can control memory usage layers by adjusting `memory_layers`
+- During batch inference, memory is shared across batches
 
-### 4. 调试技巧
+### 4. Debugging Tips
 ```python
-# 启用详细的记忆统计输出
+# Enable detailed memory statistics output
 stats = model.get_memory_stats()
 for key, value in stats.items():
     print(f"{key}: {value}")
 
-# 监控记忆激活频率
+# Monitor memory activation frequency
 if hasattr(model, 'memory_buffer'):
-    print(f"记忆激活率: {model.memory_buffer.usage_counts}")
+    print(f"Memory activation rate: {model.memory_buffer.usage_counts}")
 ```
 
-## 未来扩展
+## Future Extensions
 
-### 🎯 第三阶段扩展方向 (基于前两阶段成功经验)
+### 🎯 Phase 3 Extension Directions (Based on Success of First Two Phases)
 
-1. **视角多样性检测**: 添加角度差异评分，避免相似视角的重复存储
-2. **高度优势识别**: 加入高度因素，重视观察点和制高点
-3. **时间间隔过滤**: 避免连续相似帧，提高时间多样性
-4. **动态阈值调整**: 基于缓存使用率自动调整评分权重
+1. **Viewpoint Diversity Detection**: Add angle difference scoring to avoid repetitive storage of similar viewpoints
+2. **Height Advantage Recognition**: Include height factors, emphasize observation points and high ground
+3. **Temporal Interval Filtering**: Avoid consecutive similar frames, improve temporal diversity
+4. **Dynamic Threshold Adjustment**: Automatically adjust scoring weights based on cache utilization rate
 
-### 🔬 第四阶段深度优化 (需权衡GPU开销)
+### 🔬 Phase 4 Deep Optimization (Requires GPU Overhead Consideration)
 
-5. **轻量级学习化参数**: 仅关键权重可学习（<1MB额外开销）
-6. **语义记忆**: 结合视觉特征的语义相似性
-7. **多层次记忆**: 短期/中期/长期记忆分层管理
-8. **协作记忆**: 多智能体间的记忆共享机制
+5. **Lightweight Learnable Parameters**: Only key weights learnable (<1MB additional overhead)
+6. **Semantic Memory**: Combine semantic similarity of visual features
+7. **Multi-level Memory**: Short-term/medium-term/long-term memory hierarchical management
+8. **Collaborative Memory**: Memory sharing mechanism between multiple agents
 
-### 📋 实施优先级 (基于前两阶段验证)
+### 📋 Implementation Priority (Based on First Two Phase Validation)
 
-- **✅ 已完成**: 第一阶段 - 转弯行为 + 空间独特性
-- **✅ 已完成**: 第二阶段 - 零参数自适应检索权重系统 
-- **短期实施**: 第三阶段 - 视角多样性 + 高度优势  
-- **长期考虑**: 第四阶段 - 深度学习化参数（仅在证明ROI后）
+- **✅ Completed**: Phase 1 - Turn behavior + Spatial uniqueness
+- **✅ Completed**: Phase 2 - Zero-parameter adaptive retrieval weight system
+- **Short-term Implementation**: Phase 3 - Viewpoint diversity + Height advantage
+- **Long-term Consideration**: Phase 4 - Deep learnable parameters (only after proving ROI)
 
-### 🎯 第二阶段成果验证
+### 🎯 Phase 2 Achievement Validation
 
-- ✅ **零参数实现**: 无需训练，动态调整检索权重
-- ✅ **智能触发**: 仅在复杂情况下启用，简单情况保持高效
-- ✅ **实时监控**: 提供详细的自适应权重统计信息
-- ✅ **GPU友好**: 计算开销极小，主要是简单的if-else逻辑
-- ✅ **不影响存储**: 仅优化检索逻辑，存储策略保持稳定
+- ✅ **Zero-parameter Implementation**: No training required, dynamic retrieval weight adjustment
+- ✅ **Smart Triggering**: Only enabled in complex situations, maintains efficiency in simple cases
+- ✅ **Real-time Monitoring**: Provides detailed adaptive weight statistics
+- ✅ **GPU-friendly**: Minimal computational overhead, mainly simple if-else logic
+- ✅ **No Storage Impact**: Only optimizes retrieval logic, storage strategy remains stable
 
 ---
 
-*最后更新: 2025年8月5日*  
-*版本: 混合记忆系统 v2.2 (第一阶段 + 第二阶段自适应优化)*  
-*依赖: models.py (核心组件提供)*
+*Last Updated: August 5, 2025*
+*Version: Hybrid Memory System v2.2 (Phase 1 + Phase 2 Adaptive Optimization)*
+*Dependencies: models.py (Core Component Provider)*
         
-        # 维护缓冲区大小
+        # Maintain buffer size
         if len(self.frames) > self.max_size:
             self.frames.pop(0)
             self.poses.pop(0)
@@ -554,153 +555,153 @@ if hasattr(model, 'memory_buffer'):
             self.frame_indices.pop(0)
 ```
 
-## 行为驱动检索机制
+## Behavior-Driven Retrieval Mechanism
 
-### 核心问题解决
+### Core Problem Solution
 
-**原始问题**：基于状态相似性的检索会导致语义错误
-- **往前走**：选择相似朝向的帧 ✓ 正确
-- **转弯时**：选择相同朝向的帧 ✗ 错误（需要转弯经验，不是直行经验）
+**Original Problem**: Retrieval based on state similarity leads to semantic errors
+- **Moving Forward**: Select frames with similar orientation ✓ Correct
+- **When Turning**: Select frames with same orientation ✗ Wrong (needs turning experience, not straight-line experience)
 
-**解决方案**：从状态相似性转向行为相关性
+**Solution**: Shift from state similarity to behavior relevance
 
-### 智能检索算法
+### Intelligent Retrieval Algorithm
 
 ```python
 def get_relevant_frames(self, current_pose, target_action=None, k=8):
     """
-    基于空间邻近性和行为相关性的智能帧检索
+    Intelligent frame retrieval based on spatial proximity and behavior relevance
     
     Args:
-        current_pose: 当前位置 [x, y, z, yaw]
-        target_action: 目标动作 [delta_x, delta_y, delta_yaw]
-        k: 检索帧数量
+        current_pose: Current position [x, y, z, yaw]
+        target_action: Target action [delta_x, delta_y, delta_yaw]
+        k: Number of frames to retrieve
     
     Returns:
-        相关性最高的k个历史帧
+        Top k most relevant historical frames
     """
     if len(self.frames) == 0:
         return None
         
-    # 1. 空间相似性计算 (80% 权重)
+    # 1. Spatial similarity calculation (80% weight)
     current_pos = current_pose[:3].cpu()
     memory_poses = torch.stack(self.poses)
     spatial_dists = torch.norm(memory_poses[:, :3] - current_pos[:3], dim=1)
     spatial_sims = torch.exp(-spatial_dists / 10.0)
     
-    # 2. 行为相似性计算 (20% 权重)
+    # 2. Behavior similarity calculation (20% weight)
     if target_action is not None and len(self.actions) > 0:
         target_action_cpu = target_action.cpu()
         memory_actions = torch.stack(self.actions)
         action_dists = torch.norm(memory_actions - target_action_cpu, dim=1)
         action_sims = torch.exp(-action_dists / 5.0)
         
-        # 综合评分：空间优先，行为指导
+        # Comprehensive scoring: spatial priority, behavior guidance
         similarities = 0.8 * spatial_sims + 0.2 * action_sims
     else:
         similarities = spatial_sims
     
-    # 3. 选择最相关的帧
+    # 3. Select most relevant frames
     top_k_indices = torch.topk(similarities, min(k, len(similarities))).indices
     relevant_frames = [self.frames[i] for i in top_k_indices]
     return torch.stack(relevant_frames)
 ```
 
-### 行为语义分析
+### Behavior Semantic Analysis
 
-对于 NoMaD 轨迹数据计算的动作 `[delta_x, delta_y, delta_yaw]`：
+For action `[delta_x, delta_y, delta_yaw]` calculated from NoMaD trajectory data:
 
-#### 智能行为分类
+#### Intelligent Behavior Classification
 
-**问题**：转弯角度多样性导致简单距离匹配失效
-- 需要90°右转，历史有30°右转和90°左转
-- 简单距离：会错误选择30°右转 (距离60°) 而非90°左转 (距离180°)
+**Problem**: Turn angle diversity causes simple distance matching to fail
+- Need 90° right turn, history has 30° right turn and 90° left turn
+- Simple distance: would incorrectly choose 30° right turn (distance 60°) over 90° left turn (distance 180°)
 
-**解决方案**：行为语义分类而非数值匹配
+**Solution**: Behavior semantic classification rather than numerical matching
 
-| 旋转类别 | 角度范围 | 行为特征 | 匹配策略 |
-|---------|----------|----------|----------|
-| **直行** | \|yaw\| < 6° | 保持方向 | 所有直行互相匹配 |
-| **微调** | 6° ≤ \|yaw\| < 17° | 小幅调整 | 方向+幅度匹配 |
-| **转弯** | 17° ≤ \|yaw\| < 57° | 明显转向 | 方向优先，幅度次要 |
-| **大转** | \|yaw\| ≥ 57° | 大幅转向 | 方向优先，幅度次要 |
+| Rotation Category | Angle Range | Behavior Characteristics | Matching Strategy |
+|------------------|-------------|-------------------------|-------------------|
+| **Straight** | \|yaw\| < 6° | Maintain direction | All straight movements match each other |
+| **Minor** | 6° ≤ \|yaw\| < 17° | Small adjustment | Direction + magnitude matching |
+| **Turn** | 17° ≤ \|yaw\| < 57° | Obvious turning | Direction priority, magnitude secondary |
+| **Large Turn** | \|yaw\| ≥ 57° | Major turning | Direction priority, magnitude secondary |
 
-#### 相似性计算优先级
+#### Similarity Calculation Priority
 
 ```python
 def compute_behavioral_similarity(target_action, memory_actions):
-    # 1. 线性运动分析 (40% 权重)
+    # 1. Linear motion analysis (40% weight)
     magnitude_sims = exp(-|target_speed - memory_speed| / threshold)
-    direction_sims = (dot_product + 1) / 2  # 运动方向相似性
+    direction_sims = (dot_product + 1) / 2  # Movement direction similarity
     
-    # 2. 旋转行为分类 (30% 权重)  
+    # 2. Rotation behavior classification (30% weight)  
     rotation_sims = classify_and_match_rotation(target_yaw, memory_yaw)
     
-    # 3. 综合评分
+    # 3. Comprehensive scoring
     behavioral_sims = 0.4 * magnitude_sims + 0.3 * direction_sims + 0.3 * rotation_sims
     
-    # 最终结合空间相似性
+    # Final combination with spatial similarity
     final_sims = 0.8 * spatial_sims + 0.2 * behavioral_sims
 ```
 
-#### 实际匹配效果（改进的评分标准）
+#### Actual Matching Effects (Improved Scoring Criteria)
 
-**场景1：需要90°右转**
-- ✅ **优先选择**：60°右转(0.5分), 45°右转(0.4分), 120°右转(0.3分) (同方向转弯)
-- ⭐ **评分差异**：转弯基础分数(0.3-0.5) << 直行基础分数(0.9-1.0)
-- ❌ **避免选择**：直行(0.1分), 90°左转(0.05分) (不同行为类别)
+**Scenario 1: Need 90° right turn**
+- ✅ **Priority Selection**: 60° right turn(0.5 pts), 45° right turn(0.4 pts), 120° right turn(0.3 pts) (same direction turning)
+- ⭐ **Score Difference**: Turn base score(0.3-0.5) << Straight base score(0.9-1.0)
+- ❌ **Avoid Selection**: Straight(0.1 pts), 90° left turn(0.05 pts) (different behavior categories)
 
-**场景2：需要直行**  
-- ✅ **优先选择**：所有直行经验(1.0分) (delta_yaw ≈ 0)
-- ⭐ **评分差异**：直行vs转弯有明显分数差距 (1.0 vs 0.1)
-- ❌ **避免选择**：任何转弯经验(0.1分)
+**Scenario 2: Need straight movement**
+- ✅ **Priority Selection**: All straight experiences(1.0 pts) (delta_yaw ≈ 0)
+- ⭐ **Score Difference**: Straight vs turn has obvious score gap (1.0 vs 0.1)
+- ❌ **Avoid Selection**: Any turning experience(0.1 pts)
 
-**场景3：需要微调(10°左转)**
-- ✅ **最优匹配**：5-15°左转(0.7分) (同类别同方向)
-- ✅ **次优匹配**：20-30°左转(0.5分) (同方向不同类别)  
-- ❌ **避免选择**：直行(0.1分), 右转(0.05分), 大幅左转(0.3分)
+**Scenario 3: Need minor adjustment (10° left turn)**
+- ✅ **Optimal Match**: 5-15° left turn(0.7 pts) (same category same direction)
+- ✅ **Suboptimal Match**: 20-30° left turn(0.5 pts) (same direction different category)
+- ❌ **Avoid Selection**: Straight(0.1 pts), right turn(0.05 pts), large left turn(0.3 pts)
 
-**评分原则**：
-- 直行类别基础分数：0.9-1.0（高）
-- 转弯类别基础分数：0.3-0.7（中低）  
-- 交叉类别惩罚：×0.1（严格区分）
+**Scoring Principles**:
+- Straight category base score: 0.9-1.0 (High)
+- Turn category base score: 0.3-0.7 (Medium-low)
+- Cross-category penalty: ×0.1 (Strict distinction)
 
-## 混合架构优势
+## Hybrid Architecture Advantages
 
-### 1. 分层内存激活
+### 1. Hierarchical Memory Activation
 
 ```python
 class HybridCDiTBlock(nn.Module):
     def forward(self, x, c, x_cond, memory_frames=None, memory_activation_score=0.0):
-        # 1. 自注意力 (CDiT 标准)
+        # 1. Self-attention (CDiT Standard)
         x = x + self.self_attention(x)
         
-        # 2. 条件交叉注意力 (CDiT 核心优势)
+        # 2. Conditional cross-attention (CDiT Core Advantage)
         x = x + self.cross_attention(x, x_cond)
         
-        # 3. 选择性内存注意力 (WorldMem 增强)
+        # 3. Selective memory attention (WorldMem Enhancement)
         if self.enable_memory and memory_frames is not None:
-            if memory_activation_score > 0.3:  # 智能激活
+            if memory_activation_score > 0.3:  # Intelligent activation
                 x = x + self.memory_attention(x, memory_frames)
         
-        # 4. MLP 处理
+        # 4. MLP processing
         x = x + self.mlp(x)
         return x
 ```
 
-### 2. 自适应内存激活
+### 2. Adaptive Memory Activation
 
 ```python
 def compute_memory_activation_score(self, current_pose, action_magnitude):
     """
-    根据情况复杂度决定是否激活内存
-    - 复杂场景：激活内存获取历史经验
-    - 简单场景：依赖即时感知
+    Decide whether to activate memory based on situation complexity
+    - Complex scenarios: Activate memory to get historical experience
+    - Simple scenarios: Rely on immediate perception
     """
-    # 基于动作幅度和场景复杂度
+    # Based on action magnitude and scene complexity
     complexity_score = action_magnitude * 0.5
     
-    # 基于内存相关性
+    # Based on memory relevance
     if len(self.memory_buffer.frames) > 10:
         memory_relevance = self.compute_memory_relevance(current_pose)
         complexity_score += memory_relevance * 0.5
@@ -708,31 +709,31 @@ def compute_memory_activation_score(self, current_pose, action_magnitude):
     return min(complexity_score, 1.0)
 ```
 
-## 训练集成
+## Training Integration
 
-### 内存使用策略
+### Memory Usage Strategy
 
-**重要更新**：分离存储和推理逻辑，实现分层内存机制
+**Important Update**: Separate storage and inference logic, implement hierarchical memory mechanism
 
 ```python
 def forward(self, x, t, y, x_cond, rel_t, current_pose=None, update_memory=True):
-    # ... 模型前向传播 ...
+    # ... Model forward propagation ...
     
-    # 内存检索：只在推理时且指定层进行
+    # Memory retrieval: Only during inference and in specified layers
     if self.memory_enabled and current_pose is not None and not self.training:
         memory_frames = self.memory_buffer.get_relevant_frames(...)
     
-    # 分层处理：
+    # Hierarchical processing:
     for i, block in enumerate(self.blocks):
         if i in self.memory_layers:
-            # 后期层：既存储又使用记忆进行推理
+            # Later layers: Both store and use memory for inference
             x = block(x, c, x_cond, memory_frames, memory_activation_score)
         else:
-            # 前期层（0-15）：只进行标准CDiT处理，不使用记忆推理
+            # Earlier layers (0-15): Only standard CDiT processing, no memory inference
             x = block(x, c, x_cond)
     
-    # 内存存储：推理时所有层都进行存储
-    # 关键设计：即使前15层不使用记忆推理，也会存储记忆
+    # Memory storage: All layers perform storage during inference
+    # Key design: Even if first 15 layers don't use memory inference, they still store memories
     if update_memory and self.memory_enabled and not self.training:
         current_action = y[0] if y is not None else None
         self.update_memory(x.detach(), current_pose[0], current_action)
@@ -740,45 +741,45 @@ def forward(self, x, t, y, x_cond, rel_t, current_pose=None, update_memory=True)
     return x
 ```
 
-### 分层内存设计
+### Hierarchical Memory Design
 
-1. **前期层（0-15层）**：
-   - ✅ **激活记忆存储**：持续积累历史经验
-   - ❌ **不使用记忆推理**：保持CDiT的原始处理能力
-   - 🎯 **设计目的**：确保记忆系统始终在工作，为后续层提供丰富素材
+1. **Earlier Layers (0-15)**:
+   - ✅ **Activate Memory Storage**: Continuously accumulate historical experience
+   - ❌ **No Memory Inference**: Maintain CDiT's original processing capability
+   - 🎯 **Design Purpose**: Ensure memory system always works, providing rich material for subsequent layers
 
-2. **后期层（memory_layers）**：
-   - ✅ **激活记忆存储**：继续积累经验
-   - ✅ **使用记忆推理**：利用历史经验增强生成
-   - 🎯 **设计目的**：基于积累的记忆进行智能决策
+2. **Later Layers (memory_layers)**:
+   - ✅ **Activate Memory Storage**: Continue accumulating experience
+   - ✅ **Use Memory Inference**: Utilize historical experience to enhance generation
+   - 🎯 **Design Purpose**: Make intelligent decisions based on accumulated memory
 
-### 训练优势
+### Training Advantages
 
-1. **纯GPU训练**：所有计算操作保持在GPU上，避免CPU-GPU数据传输
-2. **无内存开销**：训练时不使用buffer，节省内存和计算资源
-3. **简洁高效**：训练逻辑与标准CDiT基本相同，稳定可靠
-4. **推理增强**：内存机制仅在推理时启用，提供额外的上下文信息
-5. **连续记忆**：前期层的持续存储确保记忆系统不间断工作
+1. **Pure GPU Training**: All computational operations stay on GPU, avoiding CPU-GPU data transfer
+2. **No Memory Overhead**: No buffer usage during training, saving memory and computational resources
+3. **Simple and Efficient**: Training logic basically same as standard CDiT, stable and reliable
+4. **Inference Enhancement**: Memory mechanism only enabled during inference, providing additional contextual information
+5. **Continuous Memory**: Continuous storage in earlier layers ensures memory system works uninterrupted
 
-## 性能优化
+## Performance Optimization
 
-### 向量化计算
+### Vectorized Computation
 
-所有内存操作都进行了向量化优化：
+All memory operations have been optimized with vectorization:
 
-- **原始循环方式**：~23% 计算开销
-- **向量化优化后**：~15.6% 计算开销
-- **性能提升**：~32% 减少计算时间
+- **Original Loop Method**: ~23% computational overhead
+- **After Vectorization Optimization**: ~15.6% computational overhead
+- **Performance Improvement**: ~32% reduction in computation time
 
-### 内存管理
+### Memory Management
 
-- **缓冲区大小**：可配置 (默认 50 帧)
-- **激活阈值**：自适应调整
-- **清理策略**：FIFO 方式维护缓冲区
+- **Buffer Size**: Configurable (default 50 frames)
+- **Activation Threshold**: Adaptive adjustment
+- **Cleanup Strategy**: FIFO method to maintain buffer
 
-## 配置说明
+## Configuration Description
 
-### 模型配置
+### Model Configuration
 
 ```yaml
 # config/nwm_hybrid.yaml
@@ -786,17 +787,17 @@ model: "CDiT-XL/2"
 use_hybrid_model: true
 memory_enabled: true
 memory_buffer_size: 50
-memory_layers: [0, 3, 6, 9]  # 在这些层激活内存
+memory_layers: [0, 3, 6, 9]  # Activate memory in these layers
 
-# 权重配置
-spatial_weight: 0.8  # 空间相似性权重
-action_weight: 0.2   # 行为相似性权重
+# Weight configuration
+spatial_weight: 0.8  # Spatial similarity weight
+action_weight: 0.2   # Behavior similarity weight
 ```
 
-### 训练参数
+### Training Parameters
 
 ```python
-# 使用混合模型
+# Use hybrid model
 model = HybridCDiT_models["HybridCDiT-XL/2"](
     context_size=num_cond,
     input_size=latent_size,
@@ -806,108 +807,108 @@ model = HybridCDiT_models["HybridCDiT-XL/2"](
 )
 ```
 
-## 实际应用效果
+## Practical Application Effects
 
-### 场景示例
+### Scenario Examples
 
-#### 🏬 仓库导航
-- **任务**：在货架间导航并转弯
-- **传统方法**：可能选择相同朝向的直行经验
-- **混合系统**：选择相似位置的转弯经验
-- **结果**：更自然的转弯行为
+#### 🏬 Warehouse Navigation
+- **Task**: Navigate between shelves and make turns
+- **Traditional Method**: May select straight-line experience with same orientation
+- **Hybrid System**: Select turning experience from similar positions
+- **Result**: More natural turning behavior
 
-#### 🏃 走廊直行
-- **任务**：在长走廊中保持直行
-- **传统方法**：可能选择转弯经验
-- **混合系统**：选择直行行为的历史经验
-- **结果**：更稳定的直行控制
+#### 🏃 Corridor Straight Movement
+- **Task**: Maintain straight movement in long corridors
+- **Traditional Method**: May select turning experience
+- **Hybrid System**: Select historical experience of straight-line behavior
+- **Result**: More stable straight-line control
 
-## 技术特点
+## Technical Features
 
-1. **语义合理性**：基于行为意图而非状态相似性
-2. **计算效率**：向量化操作，性能优化
-3. **自适应性**：根据场景复杂度调整内存激活
-4. **可扩展性**：模块化设计，易于定制
-5. **向后兼容**：支持标准 CDiT 模式
+1. **Semantic Reasonableness**: Based on behavioral intent rather than state similarity
+2. **Computational Efficiency**: Vectorized operations with performance optimization
+3. **Adaptability**: Adjust memory activation based on scene complexity
+4. **Extensibility**: Modular design, easy to customize
+5. **Backward Compatibility**: Supports standard CDiT mode
 
-## 总结
+## Summary
 
-WorldMem-CDiT 混合内存系统通过"**合理性优于相似性**"的设计理念，实现了：
+The WorldMem-CDiT hybrid memory system implements the design philosophy of "**Reasonableness over Similarity**", achieving:
 
-- ✅ **智能内存检索**：基于行为相关性选择历史经验
-- ✅ **高效计算**：向量化操作，最小化性能开销  
-- ✅ **语义一致性**：确保内存支持当前行为意图
-- ✅ **自适应激活**：根据场景复杂度智能使用内存
+- ✅ **Intelligent Memory Retrieval**: Select historical experience based on behavioral relevance
+- ✅ **Efficient Computation**: Vectorized operations, minimal performance overhead
+- ✅ **Semantic Consistency**: Ensure memory supports current behavioral intent
+- ✅ **Adaptive Activation**: Intelligently use memory based on scene complexity
 
-这种设计使得模型能够在合适的时机调用合适的历史经验，显著提升导航的智能性和鲁棒性。
+This design enables the model to call appropriate historical experience at the right time, significantly improving navigation intelligence and robustness.
 
-## 智能存储机制优化
+## Intelligent Storage Mechanism Optimization
 
-### 当前存储策略分析
+### Current Storage Strategy Analysis
 
-**现状**：目前所有帧都无条件存储到memory buffer
-- ✅ **优点**：确保不丢失任何信息
-- ❌ **缺点**：可能存储大量冗余或低价值信息
+**Current Status**: Currently all frames are unconditionally stored in memory buffer
+- ✅ **Advantage**: Ensures no information is lost
+- ❌ **Disadvantage**: May store large amounts of redundant or low-value information
 
-### 关键位置检测
+### Key Position Detection
 
-**建议实现基于场景重要性的选择性存储**：
+**Recommend implementing selective storage based on scene importance**:
 
-1. **大转弯检测**：
+1. **Large Turn Detection**:
    ```python
-   # 检测显著转向动作
+   # Detect significant turning actions
    if abs(delta_yaw) > SIGNIFICANT_TURN_THRESHOLD:
-       should_store = True  # 转弯时的视觉信息很重要
+       should_store = True  # Visual information during turns is important
    ```
 
-2. **关键地标识别**：
+2. **Key Landmark Recognition**:
    ```python
-   # 未来扩展：基于视觉特征检测地标
+   # Future extension: landmark detection based on visual features
    if detect_landmark(frame_features):
-       should_store = True  # 地标位置需要记忆
+       should_store = True  # Landmark positions need to be remembered
    ```
 
-3. **行为变化点**：
+3. **Behavior Change Points**:
    ```python
-   # 检测行为模式变化
+   # Detect behavior pattern changes
    if action_pattern_changed(current_action, previous_actions):
-       should_store = True  # 行为转换点很重要
+       should_store = True  # Behavior transition points are important
    ```
 
-4. **空间多样性**：
+4. **Spatial Diversity**:
    ```python
-   # 确保空间覆盖的多样性
+   # Ensure spatial coverage diversity
    if spatial_diversity_score(current_pose, buffer_poses) > threshold:
-       should_store = True  # 新区域需要记忆
+       should_store = True  # New areas need to be remembered
    ```
 
-### 存储价值评估框架
+### Storage Value Assessment Framework
 
 ```python
 def compute_storage_value(frame, pose, action, buffer_state):
     """
-    计算帧的存储价值分数
+    Calculate storage value score for frames
     
-    评估维度：
-    1. 行为重要性（转弯、停止、加速等）
-    2. 空间新颖性（是否到达新区域）
-    3. 时间间隔（避免连续相似帧）
-    4. 缓冲区多样性（平衡不同类型经验）
+    Assessment dimensions:
+    1. Behavior importance (turning, stopping, acceleration, etc.)
+    2. Spatial novelty (whether reaching new areas)
+    3. Temporal intervals (avoid consecutive similar frames)
+    4. Buffer diversity (balance different types of experiences)
     """
     
-    # 1. 行为重要性评分
+    # 1. Behavior importance scoring
     behavior_score = evaluate_action_significance(action)
     
-    # 2. 空间新颖性评分  
+    # 2. Spatial novelty scoring
     spatial_score = evaluate_spatial_novelty(pose, buffer_state.poses)
     
-    # 3. 时间多样性评分
+    # 3. Temporal diversity scoring
     temporal_score = evaluate_temporal_diversity(buffer_state.timestamps)
     
-    # 4. 缓冲区平衡评分
+    # 4. Buffer balance scoring
     balance_score = evaluate_buffer_balance(action, buffer_state.actions)
     
-    # 综合评分
+    # Comprehensive scoring
     storage_value = (0.4 * behavior_score + 
                     0.3 * spatial_score + 
                     0.2 * temporal_score + 
@@ -916,67 +917,69 @@ def compute_storage_value(frame, pose, action, buffer_state):
     return storage_value
 ```
 
-### 实现建议
+### Implementation Recommendations
 
-1. **阶段性实现**：
-   - 第一阶段：基于转弯幅度的简单过滤
-   - 第二阶段：加入空间多样性考虑
-   - 第三阶段：引入视觉地标检测
+1. **Phased Implementation**:
+   - Phase 1: Simple filtering based on turn magnitude
+   - Phase 2: Add spatial diversity consideration
+   - Phase 3: Introduce visual landmark detection
 
-2. **存储阈值动态调整**：
+2. **Dynamic Storage Threshold Adjustment**:
    ```python
-   # 根据buffer占用率动态调整存储阈值
+   # Dynamically adjust storage threshold based on buffer utilization
    if buffer_utilization < 0.5:
-       storage_threshold = 0.3  # 宽松标准
+       storage_threshold = 0.3  # Relaxed criteria
    elif buffer_utilization < 0.8:
-       storage_threshold = 0.5  # 中等标准
+       storage_threshold = 0.5  # Medium criteria
    else:
-       storage_threshold = 0.7  # 严格标准
+       storage_threshold = 0.7  # Strict criteria
    ```
 
-3. **优先级替换策略**：
-   - 当buffer满时，优先替换价值评分最低的帧
-   - 保留关键转弯点和地标位置的记忆
+3. **Priority Replacement Strategy**:
+   - When buffer is full, prioritize replacing frames with lowest value scores
+   - Preserve memories of key turning points and landmark positions
 
-## 完全归一化更新
+## Complete Normalization Update
 
-### 核心修改
+### Core Modifications
 
-为解决yaw权重不平衡问题，已实现**完全归一化**方案：
+To solve the yaw weight imbalance problem, **complete normalization** has been implemented:
 
-**问题**：原始yaw范围[-3.14, 3.14]与dx/dy范围相近，导致某些情况下yaw主导距离计算，影响训练稳定性。
+**Problem**: Original yaw range [-3.14, 3.14] is similar to dx/dy range, causing yaw to dominate distance calculations in some cases, affecting training stability.
 
-**解决**：所有action维度（dx, dy, dyaw）统一归一化到[-1,1]范围。
+**Solution**: All action dimensions (dx, dy, dyaw) are uniformly normalized to [-1,1] range.
 
-### 代码修改
+### Code Modifications
 
 ```python
-# datasets.py & latent_dataset.py - 完全归一化
-actions = normalize_data(actions, self.ACTION_STATS)  # 所有3维
-goal_pos = normalize_data(goal_pos, self.ACTION_STATS)  # 所有3维
+# datasets.py & latent_dataset.py - Complete normalization
+actions = normalize_data(actions, self.ACTION_STATS)  # All 3 dimensions
+goal_pos = normalize_data(goal_pos, self.ACTION_STATS)  # All 3 dimensions
 
-# hybrid_models.py - 调整行为分类阈值
-STRAIGHT_THRESHOLD = 0.032    # 原 0.1 rad (~6°)
-MINOR_THRESHOLD = 0.096       # 原 0.3 rad (~17°)  
-TURN_THRESHOLD = 0.318        # 原 1.0 rad (~57°)
-LINEAR_THRESHOLD = 0.307      # 原 0.1 meter
+# hybrid_models.py - Current behavior classification thresholds (as implemented)
+'significant_turn_threshold': 0.25,  # ~14° - Significant turn detection
+'sharp_turn_threshold': 0.45,        # ~26° - Sharp turn detection  
+'linear_motion_threshold': 0.2,      # Linear motion threshold
 ```
 
-### 优势
+### Advantages
 
-- ✅ **权重平衡**：消除yaw主导距离计算的问题
-- ✅ **训练稳定**：各维度梯度scale一致，减少数值不稳定
-- ✅ **语义保持**：行为分类阈值精确调整，保持原有语义正确性
-- ✅ **内存一致**：存储和检索都使用归一化值，逻辑一致
+- ✅ **Weight Balance**: Eliminates yaw domination in distance calculations
+- ✅ **Training Stability**: Consistent gradient scales across dimensions, reduces numerical instability
+- ✅ **Behavior Classification**: Uses validated thresholds from actual implementation
+- ✅ **Memory Consistency**: Both storage and retrieval use normalized values, logical consistency
 
-### 重要提醒
+### Current Data Pipeline
 
-⚠️ **破坏性修改**：需要重新预处理数据和重新开始训练
+⚠️ **Current Implementation**: The project uses `latent_dataset.py` for training with pre-encoded latents
 
 ```bash
-# 重新预处理
-cd latent-encoding && ./encode_all_datasets.sh
+# Encode datasets for faster training
+python scripts/encode_latents.py --dataset <dataset_name>
 
-# 重新训练
-python train.py [配置]
+# Or encode all datasets
+bash scripts/encode_all_datasets.sh
+
+# Training uses latent_dataset.py automatically
+python train.py --config config/nwm_cdit_xl.yaml
 ```

@@ -1,8 +1,5 @@
 """
-This repo is forked from [Boyuan Chen](https://boyuan.space/)'s research 
-template [repo](https://github.com/buoyancy99/research-template). 
-By its MIT license, you must keep the above sentence in `README.md` 
-and the `LICENSE` file to credit the author.
+Base experiment class for WorldMem training and evaluation.
 """
 
 from abc import ABC, abstractmethod
@@ -295,17 +292,17 @@ class BaseLightningExperiment(BaseExperiment):
 
         trainer = pl.Trainer(
             accelerator="auto",
-            devices="auto",  # 自动选择设备
+            devices="auto",  # Auto select device
             strategy=DDPStrategy(find_unused_parameters=True) if torch.cuda.device_count() > 1 else "auto",
-            logger=self.logger or False,  # 简化写法
+            logger=self.logger or False,  # Simplified syntax
             callbacks=callbacks,
-            gradient_clip_val=self.cfg.training.optim.gradient_clip_val or 0.0,  # 确保默认值
+            gradient_clip_val=self.cfg.training.optim.gradient_clip_val or 0.0,  # Ensure default value
             val_check_interval=self.cfg.validation.val_every_n_step if self.cfg.validation.val_every_n_step else None,
             limit_val_batches=self.cfg.validation.limit_batch,
             check_val_every_n_epoch=self.cfg.validation.val_every_n_epoch if not self.cfg.validation.val_every_n_step else None,
-            accumulate_grad_batches=self.cfg.training.optim.accumulate_grad_batches or 1,  # 默认累积为1
-            precision=self.cfg.training.precision or 32,  # 默认32位精度
-            detect_anomaly=False,  # 默认关闭异常检测
+            accumulate_grad_batches=self.cfg.training.optim.accumulate_grad_batches or 1,  # Default accumulation is 1
+            precision=self.cfg.training.precision or 32,  # Default 32-bit precision
+            detect_anomaly=False,  # Anomaly detection disabled by default
             num_sanity_val_steps=int(self.cfg.debug) if self.cfg.debug else 0,
             max_epochs=self.cfg.training.max_epochs,
             max_steps=self.cfg.training.max_steps,
