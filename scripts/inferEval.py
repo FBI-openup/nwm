@@ -1,19 +1,30 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Author: Boyuan Zha# ======================= Step 2: Prediction generation ========================
-for eval_type in ["time", "rollout"]:
-    cmd = [
-        "python", "-m", "scripts.isolated_nwm_infer",This script automates the full evaluation pipeline for NWM models:
-    1. Generate Ground Truth images
-    2. Generate predicted images using pretrained models
-    3. Run LPIPS / DreamSim / FID evaluation and output scores
+NWM Image Generation Evaluation Script
+======================================
+
+This script automates the full evaluation pipeline for NWM image generation models.
+It is SEPARATE from planning_eval.py which evaluates path planning quality.
+
+FUNCTIONALITY:
+1. Generate Ground Truth images
+2. Generate predicted images using pretrained models
+3. Run LPIPS / DreamSim / FID evaluation and output scores
 
 The script also creates/maintains a central table (CSV) to store results, for easy comparison across experiments.
+
+DEPENDENCIES:
+- Uses standard NWM dependencies (no extra requirements-eval.txt needed)
+- Evaluation metrics: LPIPS, DreamSim, FID
 
 Usage Notes:
 - You need to configure dataset, config path, checkpoint, and optional fps settings.
 - All generated files are placed under clearly named subfolders of: output_GT, output_pred, and eval_table.
+
+USAGE EXAMPLES:
+python scripts/inferEval.py --datasets scand --exp_config config/nwm_config.yaml
+python scripts/inferEval.py --datasets recon,tartan --exp_config config/nwm_config.yaml --ckpt 0200000
 """
 
 import os

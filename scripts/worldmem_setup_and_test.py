@@ -10,8 +10,14 @@ Author: Navigation World Models Team
 Date: July 2025
 """
 
+# pylint: disable=import-error
+# pyright: reportMissingImports=false
+
 import os
 import sys
+# Add the parent directory (nwm root) to Python path to import project modules
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import subprocess
 import shutil
 import importlib
@@ -62,28 +68,37 @@ class WorldMemSetup:
         logger.info(f"WorldMem path: {self.worldmem_path}")
 
     def _detect_nwm_root(self) -> Path:
-        """Auto-detect the nwm root directory"""
-        current = Path.cwd()
+        """Auto-detect the nwm root directory using script location"""
+        # Get the directory containing this script file (scripts/)
+        script_dir = Path(__file__).parent.absolute()
         
-        # Check if we're already in the nwm directory or a subdirectory
+        # The nwm root should be the parent of the scripts directory
+        nwm_root = script_dir.parent
+        
+        # Verify this is indeed the nwm root by checking for expected directories
+        required_dirs = ["WorldMem", "config", "scripts"]
+        if all((nwm_root / dir_name).exists() for dir_name in required_dirs):
+            return nwm_root
+        
+        # Fallback: search upward from current working directory
+        current = Path.cwd()
         while current != current.parent:
-            if (current / "WorldMem").exists() and (current / "config").exists() and (current / "scripts").exists():
+            if all((current / dir_name).exists() for dir_name in required_dirs):
                 return current
             current = current.parent
         
-        # Fallback: check if we're in a subdirectory of nwm
-        current = Path.cwd()
+        # Another fallback: search upward from script directory
+        current = script_dir
         while current != current.parent:
-            # Look for nwm directory structure
-            if current.name == "nwm" and (current / "WorldMem").exists():
+            if all((current / dir_name).exists() for dir_name in required_dirs):
                 return current
             current = current.parent
         
-        # Last resort: use current working directory if it contains expected files
-        if (Path.cwd() / "WorldMem").exists() or (Path.cwd() / "config").exists():
-            return Path.cwd()
-        
-        raise FileNotFoundError("Could not detect nwm root directory. Please run from within the nwm project.")
+        raise FileNotFoundError(
+            f"Could not detect nwm root directory. "
+            f"Expected to find directories {required_dirs} in project root. "
+            f"Script location: {script_dir}"
+        )
 
     def print_banner(self, text: str, color: str = Colors.HEADER):
         """Print a styled banner"""
@@ -176,31 +191,101 @@ class WorldMemSetup:
         
         return success
 
+    def install_eval_requirements(self) -> bool:
+        """Install advanced evaluation requirements for NWM"""
+        self.print_banner("INSTALLING ADVANCED EVALUATION REQUIREMENTS", Colors.OKBLUE)
+        
+        eval_requirements_file = self.nwm_path / "requirements-eval.txt"
+        
+        if not eval_requirements_file.exists():
+            print(f"{Colors.WARNING}! Advanced evaluation requirements file not found: {eval_requirements_file}{Colors.ENDC}")
+            print(f"{Colors.WARNING}! Skipping advanced evaluation dependencies installation{Colors.ENDC}")
+            return True
+        
+        print(f"{Colors.OKCYAN}Installing advanced evaluation tools...{Colors.ENDC}")
+        print(f"  - evo: Trajectory evaluation library with ROS support")
+        print(f"  - dreamsim: Advanced similarity metrics")
+        print(f"{Colors.OKCYAN}Note: These are heavyweight packages that may take time to install{Colors.ENDC}")
+        
+        # Install evaluation requirements
+        success, output = self.run_command([
+            sys.executable, "-m", "pip", "install", "-r", str(eval_requirements_file)
+        ])
+        
+        if success:
+            print(f"{Colors.OKGREEN}✓ Advanced evaluation requirements installed successfully{Colors.ENDC}")
+            print(f"  - evo (trajectory evaluation with ROS support)")
+            print(f"  - dreamsim (advanced similarity metrics)")
+        else:
+            print(f"{Colors.WARNING}! Failed to install advanced evaluation requirements{Colors.ENDC}")
+            print(f"{Colors.OKCYAN}Note: Advanced evaluation features may not work properly{Colors.ENDC}")
+            print(f"{Colors.OKCYAN}Basic evaluation features (lpips, scipy) are available from core requirements{Colors.ENDC}")
+            logger.error(f"pip install evaluation requirements output: {output}")
+        
+        return success
+
     def install_conda_dependencies(self) -> bool:
         """Install conda-specific dependencies"""
         self.print_banner("INSTALLING CONDA DEPENDENCIES", Colors.OKBLUE)
         
+        # Define packages with multiple version options
         conda_packages = [
-            "ffmpeg=4.3.2"
+            {
+                "name": "ffmpeg",
+                "versions": ["4.3.2", "4.4", ">=4.0"],  # Try specific version first, then fallbacks
+                "description": "FFmpeg media processing"
+            }
         ]
         
-        for package in conda_packages:
-            success, output = self.run_command([
-                "conda", "install", "-c", "conda-forge", "-y", package
-            ])
+        for package_info in conda_packages:
+            package_name = package_info["name"]
+            versions = package_info["versions"]
+            description = package_info["description"]
             
-            if success:
-                print(f"{Colors.OKGREEN}✓ Installed {package}{Colors.ENDC}")
-            else:
-                print(f"{Colors.WARNING}! Could not install {package} via conda, trying alternative{Colors.ENDC}")
-                # Try with mamba as fallback
-                success, output = self.run_command([
-                    "mamba", "install", "-c", "conda-forge", "-y", package
-                ])
-                if success:
-                    print(f"{Colors.OKGREEN}✓ Installed {package} via mamba{Colors.ENDC}")
+            installed = False
+            
+            # Try each version option
+            for version in versions:
+                if version.startswith(">="):
+                    package_spec = f"{package_name}{version}"
                 else:
-                    print(f"{Colors.WARNING}! Could not install {package}{Colors.ENDC}")
+                    package_spec = f"{package_name}={version}"
+                
+                print(f"Trying to install {package_spec}...")
+                
+                # Try conda first
+                success, output = self.run_command([
+                    "conda", "install", "-c", "conda-forge", "-y", package_spec
+                ])
+                
+                if success:
+                    print(f"{Colors.OKGREEN}✓ Installed {package_spec} via conda{Colors.ENDC}")
+                    installed = True
+                    break
+                
+                # Try mamba as fallback
+                success, output = self.run_command([
+                    "mamba", "install", "-c", "conda-forge", "-y", package_spec
+                ])
+                
+                if success:
+                    print(f"{Colors.OKGREEN}✓ Installed {package_spec} via mamba{Colors.ENDC}")
+                    installed = True
+                    break
+                
+                print(f"{Colors.WARNING}! Could not install {package_spec}{Colors.ENDC}")
+            
+            if not installed:
+                print(f"{Colors.WARNING}! Failed to install {package_name} ({description}){Colors.ENDC}")
+                print(f"{Colors.OKCYAN}Note: You may need to install {package_name} manually{Colors.ENDC}")
+                
+                # Check if ffmpeg is already available in system
+                if package_name == "ffmpeg":
+                    success, output = self.run_command(["which", "ffmpeg"])
+                    if success:
+                        print(f"{Colors.OKGREEN}✓ ffmpeg found in system PATH{Colors.ENDC}")
+                    else:
+                        print(f"{Colors.OKCYAN}Install manually: conda install -c conda-forge ffmpeg{Colors.ENDC}")
         
         return True
 
@@ -242,6 +327,102 @@ class WorldMemSetup:
         print(f"\nImport test results: {success_count}/{total_count} successful")
         return success_count == total_count
 
+    def test_eval_dependencies(self) -> bool:
+        """Test evaluation dependencies"""
+        self.print_banner("TESTING EVALUATION DEPENDENCIES", Colors.OKCYAN)
+        
+        # Basic evaluation dependencies (included in main requirements)
+        basic_eval_imports = [
+            ('lpips', 'LPIPS Perceptual Loss'),
+            ('scipy', 'SciPy'),
+            ('sklearn', 'Scikit-learn'),
+        ]
+        
+        # Advanced evaluation dependencies (optional)
+        advanced_eval_imports = [
+            ('evo', 'EVO Trajectory Evaluation'),
+            ('dreamsim', 'DreamSim Similarity'),
+        ]
+        
+        print(f"{Colors.OKCYAN}Basic evaluation dependencies:{Colors.ENDC}")
+        basic_success = 0
+        for module_name, display_name in basic_eval_imports:
+            try:
+                module = importlib.import_module(module_name)
+                version = getattr(module, '__version__', 'unknown')
+                print(f"{Colors.OKGREEN}✓ {display_name} ({version}){Colors.ENDC}")
+                basic_success += 1
+            except ImportError as e:
+                print(f"{Colors.WARNING}⚠ {display_name}: {e}{Colors.ENDC}")
+            except Exception as e:
+                print(f"{Colors.WARNING}! {display_name}: {e}{Colors.ENDC}")
+        
+        print(f"\n{Colors.OKCYAN}Advanced evaluation dependencies:{Colors.ENDC}")
+        advanced_success = 0
+        for module_name, display_name in advanced_eval_imports:
+            try:
+                module = importlib.import_module(module_name)
+                version = getattr(module, '__version__', 'unknown')
+                print(f"{Colors.OKGREEN}✓ {display_name} ({version}){Colors.ENDC}")
+                advanced_success += 1
+            except ImportError as e:
+                print(f"{Colors.WARNING}⚠ {display_name}: {e}{Colors.ENDC}")
+            except Exception as e:
+                print(f"{Colors.WARNING}! {display_name}: {e}{Colors.ENDC}")
+        
+        basic_total = len(basic_eval_imports)
+        advanced_total = len(advanced_eval_imports)
+        
+        print(f"\nBasic evaluation: {basic_success}/{basic_total} available")
+        print(f"Advanced evaluation: {advanced_success}/{advanced_total} available")
+        
+        if basic_success < basic_total:
+            print(f"{Colors.WARNING}Warning: Some basic evaluation features may not work{Colors.ENDC}")
+        
+        if advanced_success < advanced_total:
+            print(f"{Colors.OKCYAN}Note: Advanced evaluation features require additional setup{Colors.ENDC}")
+            print(f"{Colors.OKCYAN}Run setup with advanced evaluation to install missing packages{Colors.ENDC}")
+        
+        return True  # Don't fail setup for missing eval dependencies
+
+    def test_system_dependencies(self) -> bool:
+        """Test system-level dependencies"""
+        self.print_banner("TESTING SYSTEM DEPENDENCIES", Colors.OKCYAN)
+        
+        system_deps = [
+            ('ffmpeg', 'FFmpeg media processing'),
+            ('git', 'Git version control'),
+        ]
+        
+        success_count = 0
+        total_count = len(system_deps)
+        
+        for cmd, description in system_deps:
+            success, output = self.run_command(["which", cmd])
+            if success:
+                # Try to get version (some commands return non-zero but still provide version info)
+                version_success, version_output = self.run_command([cmd, "--version"])
+                if version_output and version_output.strip():
+                    # Extract first meaningful line
+                    lines = version_output.strip().split('\n')
+                    first_line = lines[0] if lines else "version info available"
+                    # Truncate long version strings
+                    if len(first_line) > 60:
+                        first_line = first_line[:57] + "..."
+                    print(f"{Colors.OKGREEN}✓ {description}: {first_line}{Colors.ENDC}")
+                else:
+                    print(f"{Colors.OKGREEN}✓ {description} available{Colors.ENDC}")
+                success_count += 1
+            else:
+                print(f"{Colors.WARNING}⚠ {description}: not found in PATH{Colors.ENDC}")
+        
+        print(f"\nSystem dependencies: {success_count}/{total_count} available")
+        
+        if success_count < total_count:
+            print(f"{Colors.OKCYAN}Note: Some features may not work without system dependencies{Colors.ENDC}")
+        
+        return True  # Don't fail setup for missing system dependencies
+
     def test_worldmem_algorithms(self) -> bool:
         """Test WorldMem algorithm imports"""
         self.print_banner("TESTING WORLDMEM ALGORITHMS", Colors.OKCYAN)
@@ -253,7 +434,7 @@ class WorldMemSetup:
         
         try:
             # Test main algorithm import
-            from algorithms.worldmem import WorldMemMinecraft, PosePrediction
+            from algorithms.worldmem import WorldMemMinecraft, PosePrediction  # type: ignore
             print(f"{Colors.OKGREEN}✓ WorldMemMinecraft imported successfully{Colors.ENDC}")
             print(f"{Colors.OKGREEN}✓ PosePrediction imported successfully{Colors.ENDC}")
             
@@ -287,7 +468,7 @@ class WorldMemSetup:
                 
                 # Test YAML loading
                 try:
-                    import yaml
+                    import yaml  # type: ignore
                     with open(memory_config_path, 'r') as f:
                         config = yaml.safe_load(f)
                     print(f"{Colors.OKGREEN}✓ Memory configuration loaded successfully{Colors.ENDC}")
@@ -313,7 +494,7 @@ class WorldMemSetup:
         self.print_banner("TESTING GPU AVAILABILITY", Colors.OKCYAN)
         
         try:
-            import torch
+            import torch  # type: ignore
             
             # Check CUDA availability
             if torch.cuda.is_available():
@@ -349,7 +530,9 @@ class WorldMemSetup:
         # Test sequence
         tests = [
             ("Environment Check", self.check_python_environment),
+            ("System Dependencies", self.test_system_dependencies),
             ("WorldMem Imports", self.test_worldmem_import),
+            ("Evaluation Dependencies", self.test_eval_dependencies),
             ("Algorithm Imports", self.test_worldmem_algorithms),
             ("Memory Integration", self.test_memory_integration),
             ("GPU Availability", self.test_gpu_availability),
@@ -385,28 +568,35 @@ class WorldMemSetup:
             print(f"{Colors.WARNING}⚠️  Some tests failed - please check the logs{Colors.ENDC}")
             return False
 
-    def full_setup(self) -> bool:
+    def full_setup(self, include_eval: bool = True) -> bool:
         """Run the complete setup process"""
         self.print_banner("WORLDMEM FULL SETUP", Colors.HEADER)
         
         steps = [
             ("Install Requirements", self.install_requirements),
             ("Install Conda Dependencies", self.install_conda_dependencies),
-            ("Run Comprehensive Test", self.run_comprehensive_test),
         ]
+        
+        if include_eval:
+            steps.append(("Install Evaluation Requirements", self.install_eval_requirements))
+        
+        steps.append(("Run Comprehensive Test", self.run_comprehensive_test))
         
         for step_name, step_func in steps:
             self.print_banner(f"STEP: {step_name}", Colors.OKBLUE)
             try:
                 if callable(step_func):
                     result = step_func()
-                    if not result and step_name != "Install Conda Dependencies":
+                    # Only fail for critical steps
+                    if not result and step_name in ["Install Requirements"]:
                         print(f"{Colors.FAIL}Setup failed at step: {step_name}{Colors.ENDC}")
                         return False
             except Exception as e:
                 print(f"{Colors.FAIL}Error in step {step_name}: {e}{Colors.ENDC}")
                 logger.error(f"Setup step error: {traceback.format_exc()}")
-                return False
+                # Only fail for critical steps
+                if step_name in ["Install Requirements"]:
+                    return False
         
         self.print_banner("SETUP COMPLETE", Colors.OKGREEN)
         print(f"{Colors.OKGREEN}🚀 WorldMem is ready to use!{Colors.ENDC}")
@@ -415,6 +605,18 @@ class WorldMemSetup:
 
 def main():
     """Main entry point"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="WorldMem Installation and Test Suite")
+    parser.add_argument("--skip-advanced-eval", action="store_true", 
+                       help="Skip installation of advanced evaluation dependencies (evo, dreamsim). Basic evaluation (lpips, scipy) is included in core requirements.")
+    parser.add_argument("--test-only", action="store_true",
+                       help="Only run tests, skip installation steps")
+    parser.add_argument("--nwm-root", type=str,
+                       help="Specify NWM root directory path")
+    
+    args = parser.parse_args()
+    
     print(f"{Colors.HEADER}")
     print("=" * 60)
     print("    WorldMem Installation and Test Suite")
@@ -423,18 +625,24 @@ def main():
     print(f"{Colors.ENDC}")
     
     try:
-        setup = WorldMemSetup()
-        success = setup.full_setup()
+        setup = WorldMemSetup(nwm_root_path=args.nwm_root)
+        
+        if args.test_only:
+            success = setup.run_comprehensive_test()
+        else:
+            success = setup.full_setup(include_eval=not args.skip_advanced_eval)
         
         if success:
             print(f"\n{Colors.OKGREEN}All done! You can now use WorldMem.{Colors.ENDC}")
             print(f"{Colors.OKCYAN}Next steps:{Colors.ENDC}")
-            print("  1. Check the log file for detailed information")
+            print("  1. Check the log output for detailed information")
             print("  2. Try running: python WorldMem/app.py")
             print("  3. Or run training: cd WorldMem && python main.py")
+            if not args.skip_eval:
+                print("  4. Run evaluation: python scripts/planning_eval.py")
         else:
             print(f"\n{Colors.WARNING}Setup completed with some issues.{Colors.ENDC}")
-            print(f"{Colors.OKCYAN}Please check the log file and fix any errors.{Colors.ENDC}")
+            print(f"{Colors.OKCYAN}Please check the log output and fix any errors.{Colors.ENDC}")
         
         return 0 if success else 1
         

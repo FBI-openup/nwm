@@ -110,50 +110,107 @@ The repository includes two automated setup scripts:
 
 For detailed information about the automated setup, see [WorldMem Setup Guide](docs/WorldMem_Setup_README.md).
 
-## Project Structure
+## Project Structure & File Guide
 
 ```
 nwm/
-├── 📁 Core NWM Files
-│   ├── train.py                    # Main training script
-│   ├── models.py                   # CDiT model implementations
-│   ├── hybrid_models.py            # Hybrid CDiT with memory system
-│   ├── datasets.py                 # Dataset loading and preprocessing
-│   └── latent_dataset.py           # Latent dataset handling
+├── Core Training & Model Files
+│   ├── train.py                    # Main training script for NWM CDiT models
+│   ├── models.py                   # CDiT model implementations (Transformer architectures)
+│   ├── hybrid_models.py            # Hybrid CDiT with integrated memory system
+│   ├── datasets.py                 # Dataset loading, preprocessing, and data pipeline
+│   ├── latent_dataset.py           # Latent dataset handling for faster training
+│   ├── distributed.py              # Distributed training utilities and synchronization
+│   ├── misc.py                     # Utility functions (transforms, metrics, helpers)
+│   └── submitit_train_cw.py        # SLURM cluster training submission script
 │
-├── 📁 Scripts & Tools
+├── Evaluation & Inference Scripts
 │   ├── scripts/
-│   │   ├── setup_nwm_env.sh        # Base environment setup
-│   │   ├── worldmem_setup_and_test.py # WorldMem setup & testing
-│   │   ├── train_L40S_slurm.sh     # SLURM training script
-│   │   ├── isolated_nwm_infer.py   # Model inference
-│   │   ├── isolated_nwm_eval.py    # Model evaluation
-│   │   ├── planning_eval.py        # Planning evaluation
-│   │   ├── inferEval.py            # Inference evaluation
-│   │   ├── encode_latents.py       # Latent encoding
-│   │   └── encode_all_datasets.sh  # Batch latent encoding
+│   │   ├── isolated_nwm_infer.py   # Model inference for single-step and rollout prediction
+│   │   ├── isolated_nwm_eval.py    # Image quality evaluation (LPIPS, FID, DreamSim)
+│   │   ├── inferEval.py            # Automated evaluation pipeline for image generation
+│   │   ├── planning_eval.py        # NOMAD path planning evaluation (trajectory analysis)
+│   │   ├── encode_latents.py       # VAE latent encoding for individual datasets
+│   │   └── encode_all_datasets.sh  # Batch script for encoding multiple datasets
 │
-├── 📁 Configuration & Data
-│   ├── config/                     # Model and training configurations
-│   ├── data/                       # Training datasets
-│   └── data_splits/                # Dataset split configurations
+├── Setup & Environment Scripts  
+│   ├── scripts/
+│   │   ├── setup_nwm_env.sh        # Base environment setup (conda, PyTorch, dependencies)
+│   │   ├── worldmem_setup_and_test.py # Comprehensive WorldMem installation & testing
+│   │   └── train_L40S_slurm.sh     # SLURM job script for L40S cluster training
 │
-├── 📁 WorldMem Integration
+├── Configuration Files
+│   ├── config/
+│   │   ├── data_config.yaml        # Dataset paths and preprocessing settings
+│   │   ├── eval_config.yaml        # Evaluation parameters and metrics configuration
+│   │   ├── memory_config.yaml      # Memory system configuration for WorldMem
+│   │   └── nwm_cdit_xl.yaml        # CDiT-XL model configuration (training hyperparams)
+│
+├── Data & Datasets
+│   ├── data/                       # Training datasets directory
+│   │   ├── recon/                  # RECON indoor navigation dataset
+│   │   ├── scand/                  # SCAND outdoor navigation dataset  
+│   │   ├── sacson/                 # SACSon/HuRoN dataset
+│   │   └── tartan_drive/           # Tartan Drive dataset
+│   │
+│   ├── data_splits/                # Dataset split configurations
+│   └── latents/                    # (Optional) Pre-encoded latents for faster training
+│
+├── Model Outputs & Results
+│   ├── logs/nwm_cdit_xl/checkpoints/ # Model checkpoint files (.pth.tar)
+│   ├── output_GT/                  # Ground truth evaluation images
+│   ├── output_pred/                # Model prediction outputs
+│   └── eval_table/                 # Evaluation results and metrics tables
+│
+├── WorldMem Integration
 │   └── WorldMem/                   # Complete WorldMem project
-│       ├── app.py                  # Gradio interface
+│       ├── app.py                  # Interactive Gradio interface
 │       ├── main.py                 # WorldMem training script
+│       ├── requirements.txt        # WorldMem-specific dependencies
 │       ├── algorithms/             # Core WorldMem algorithms
-│       ├── experiments/            # Experiment configurations
-│       ├── datasets/               # WorldMem-specific datasets
-│       └── utils/                  # Utility functions
+│       └── datasets/               # WorldMem-specific datasets
 │
-└── 📁 Documentation
+├── Advanced Features
+│   ├── diffusion/                  # Diffusion model utilities and schedulers
+│   ├── interactive_model.ipynb     # Jupyter notebook for interactive model exploration
+│   └── requirements-eval.txt       # Optional evaluation dependencies (evo, dreamsim)
+│
+└── Documentation
     ├── README.md                   # Main project documentation (this file)
-    └── docs/
-        ├── WorldMem_Setup_README.md    # Comprehensive setup guide
-        ├── README_Hybrid_Memory.md     # Memory system architecture
-        └── README_Latent_Encoding.md   # Latent encoding workflow
+    └── docs/                       # Detailed documentation guides
 ```
+
+### Key File Categories
+
+**Core Training Files**
+- `train.py`: Main entry point for training NWM models with distributed support
+- `models.py`: Contains CDiT (Conditional Diffusion Transformer) model architectures
+- `hybrid_models.py`: Advanced models with integrated memory systems for long-term consistency
+- `datasets.py`: Data loading pipeline supporting multiple navigation datasets
+
+**Inference & Evaluation**
+- `isolated_nwm_infer.py`: Generate predictions for evaluation (both single-step and trajectory)
+- `isolated_nwm_eval.py`: Compute image quality metrics (LPIPS, FID, DreamSim)
+- `inferEval.py`: End-to-end evaluation automation for image generation quality
+- `planning_eval.py`: Specialized evaluation for navigation planning using trajectory metrics
+
+**Configuration Files**
+- `data_config.yaml`: Dataset paths, preprocessing settings, and data pipeline config
+- `eval_config.yaml`: Evaluation metrics, batch sizes, and testing parameters
+- `memory_config.yaml`: Memory system settings for WorldMem integration
+
+**Setup & Dependencies**
+- `worldmem_setup_and_test.py`: Automated installation and testing for all components
+- `setup_nwm_env.sh`: Base environment setup script
+- `requirements-eval.txt`: Optional heavy dependencies for trajectory evaluation (evo library)
+
+### Usage Workflow
+
+1. **Setup**: Use `setup_nwm_env.sh` and `worldmem_setup_and_test.py`
+2. **Data Prep**: Use `encode_latents.py` for faster training (optional)
+3. **Training**: Run `train.py` with appropriate config files
+4. **Evaluation**: Use `inferEval.py` for images or `planning_eval.py` for trajectories
+5. **Interactive**: Explore with `interactive_model.ipynb` or WorldMem's `app.py`
 
 ## Data
 
@@ -296,6 +353,41 @@ To use a pretrained CDiT/XL model:
 
 # Evaluation
 
+The repository provides comprehensive evaluation tools for different aspects of the Navigation World Models:
+
+## Evaluation Types Overview
+
+### **Image Generation Quality** (`inferEval.py`)
+- **Purpose**: Evaluate visual quality of generated images
+- **Metrics**: LPIPS, DreamSim, FID
+- **Use Case**: Assess how realistic and accurate the generated images are
+- **Target**: General model performance evaluation
+
+### **Navigation Planning Quality** (`planning_eval.py`)  
+- **Purpose**: Evaluate trajectory and path planning accuracy
+- **Metrics**: APE (Absolute Pose Error), RPE (Relative Pose Error)
+- **Use Case**: Assess navigation and planning capabilities
+- **Target**: NOMAD path planning evaluation
+- **Dependencies**: Requires `evo` library (install via `requirements-eval.txt`)
+
+### **Low-level Evaluation Tools**
+- **`isolated_nwm_infer.py`**: Generate predictions for both evaluation types
+- **`isolated_nwm_eval.py`**: Compute specific image quality metrics
+
+## Quick Evaluation Setup
+
+```bash
+# Set up evaluation environment
+export RESULTS_FOLDER=/path/to/results
+
+# For image generation evaluation (lightweight)
+python scripts/inferEval.py --exp_config config/nwm_cdit_xl.yaml --datasets recon
+
+# For navigation planning evaluation (requires evo library)
+pip install -r requirements-eval.txt  # Install evaluation dependencies
+python scripts/planning_eval.py --exp config/nwm_cdit_xl.yaml --datasets recon
+```
+
 directory to save evaluation results:
 `export RESULTS_FOLDER=/path/to/res_folder/`
 
@@ -374,8 +466,20 @@ python scripts/isolated_nwm_infer.py \
 ```
 Results are saved in ${RESULTS_FOLDER}/nwm_cdit_xl/<dataset_name>
 
-### Trajectory Evaluation - Planning
+### Trajectory Evaluation - Navigation Planning
 
+**⚠️ Important**: This evaluation requires specialized dependencies for trajectory analysis.
+
+#### Prerequisites
+```bash
+# Install trajectory evaluation dependencies (heavyweight packages ~100MB+)
+pip install -r requirements-eval.txt
+
+# Or use the automated setup
+python scripts/worldmem_setup_and_test.py
+```
+
+#### Planning Evaluation with Cross Entropy Method (CEM)
 Using 1-step Cross Entropy Method planning on 8 gpus (sampling 120 trajectories):
 ```bash
 torchrun --nproc-per-node=8 scripts/planning_eval.py \
@@ -392,7 +496,21 @@ torchrun --nproc-per-node=8 scripts/planning_eval.py \
     --opt_steps 1   \
     --num_repeat_eval 3
 ```
+
+#### What This Evaluates
+- **Trajectory Accuracy**: How well the model follows intended paths
+- **Pose Estimation**: Accuracy of position and orientation predictions  
+- **Planning Quality**: Effectiveness of the Cross Entropy Method for navigation
+- **Navigation Metrics**: APE (Absolute Pose Error) and RPE (Relative Pose Error)
+
 Results are saved in ${RESULTS_FOLDER}/nwm_cdit_xl/<dataset_name>
+
+#### Optional Dependencies Note
+The `planning_eval.py` script uses specialized libraries:
+- **`evo`**: Trajectory evaluation with ROS support
+- **`dreamsim`**: Advanced similarity metrics
+
+These are not required for basic model training or image generation evaluation.
 
 ## BibTeX
 
@@ -428,10 +546,12 @@ This repository contains several specialized README files for different componen
 - **WorldMem Usage**: Visit [WorldMem/README.md](WorldMem/README.md) for the main WorldMem documentation
 
 ### Getting Started Checklist
-1. ✅ Follow [Setup & Installation](#setup--installation) above
-2. ✅ Read [WorldMem Setup Guide](docs/WorldMem_Setup_README.md) for detailed setup
-3. ✅ (Optional) Use [Latent Encoding](docs/README_Latent_Encoding.md) for faster training
-4. ✅ (Advanced) Explore [Hybrid Memory System](docs/README_Hybrid_Memory.md) for custom implementations
+1. Follow [Setup & Installation](#setup--installation) above
+2. Review [Project Structure & File Guide](#project-structure--file-guide) to understand the codebase
+3. Read [WorldMem Setup Guide](docs/WorldMem_Setup_README.md) for detailed setup
+4. (Optional) Use [Latent Encoding](docs/README_Latent_Encoding.md) for faster training
+5. Choose appropriate evaluation: [Image Quality](#image-generation-quality-inferevalpy) or [Navigation Planning](#navigation-planning-quality-planning_evalpy)
+6. (Advanced) Explore [Hybrid Memory System](docs/README_Hybrid_Memory.md) for custom implementations
 
 ## Acknowledgments
 We thank Noriaki Hirose for his help with the HuRoN dataset and for sharing his insights, and to Manan Tomar, David Fan, Sonia Joseph, Angjoo Kanazawa, Ethan Weber, Nicolas Ballas, and the anonymous reviewers for their helpful discussions and feedback.

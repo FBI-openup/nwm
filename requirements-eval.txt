@@ -1,0 +1,27 @@
+# Advanced evaluation dependencies for NOMAD Path Planning Evaluation
+# =====================================================================
+# 
+# These are OPTIONAL heavyweight dependencies used ONLY by planning_eval.py
+# for specialized trajectory and path planning evaluation.
+#
+# WHEN TO INSTALL:
+# - You want to evaluate NOMAD path planning quality
+# - You need trajectory analysis with APE/RPE metrics
+# - You are working with navigation and pose estimation evaluation
+#
+# WHEN NOT NEEDED:
+# - You only need image generation evaluation (use inferEval.py instead)
+# - You are only training or inference without detailed planning analysis
+#
+# INSTALLATION:
+# pip install -r requirements-eval.txt
+# OR
+# python scripts/worldmem_setup_and_test.py
+#
+# SIZE WARNING: These packages are ~100MB+ due to ROS support and specialized models
+
+# Trajectory evaluation library (heavyweight - includes ROS support, etc.)
+evo>=1.12.0
+
+# Advanced similarity metrics (requires special models)
+dreamsim

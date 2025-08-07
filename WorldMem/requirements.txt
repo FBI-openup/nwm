@@ -26,3 +26,8 @@ diffusers
 timm
 gradio
 spaces
+
+# Basic evaluation dependencies (lightweight)
+lpips
+scipy>=1.9.0
+scikit-learn
